@@ -1,184 +1,180 @@
-# ML Challenge 2026: Business Entity Resolution
+# ML Challenge 2026: Business Entity Resolution Solution
 
-**Team name:** Star Coders
+**Team Name:** Star Coders
+**Team Members:** Adyanth Mallur, Aditya Patil, Akshay Gudur, Advika Raj
+**Submission Date:** 25 September 2026
 
-**Team members:** Adyanth Mallur, Aditya Patil, Akshay Gudur, Advika Raj
+---
 
-**Prepared:** 25 September 2026
+## 1. Executive Summary
 
-**Approach:** Country-aware lexical blocking followed by a CatBoost pair classifier
+We normalize every record (Unicode transliteration, OCR-typo repair, canonical
+abbreviations), then generate candidates with **country-scoped, IDF-weighted
+inverted-key blocking** over six key families. Each Source 1 business keeps its
+top 64 candidates. A **two-stage gradient-boosted classifier** (XGBoost, trained
+from scratch on the provided labels) scores each pair: stage 1 uses 43 pairwise
+string and blocking features. Stage 2 adds 10 *context* features describing how the
+pair ranks among its business's candidates and against **every other business
+competing for the same Source 2/3 record**. This uses the fact that each target
+record belongs to at most one business. On a held-out 10% of training
+businesses (220k, singletons included), the pipeline scores **0.949 macro
+F0.5** (99.1% pair precision, 89.5% pair recall).
 
-## 1. Executive summary
+---
 
-We index the supplied target records with SQLite FTS5 and retrieve candidates
-through business-name, address, and name-trigram channels. A small CatBoost model
-scores 31 string-similarity and retrieval features; its threshold is selected
-using per-business macro F0.5, including businesses with no matches. All business
-data comes from the challenge files, and the pipeline runs on CPU.
+## 2. Methodology
 
-The full-corpus development holdout score is **0.925549 macro F0.5**, with
-**97.17% pair precision**, **84.59% pair recall**, and **93.82% candidate recall**.
-This is a 904-business training-data holdout result, not a test or leaderboard score.
+### 2.1 Problem Analysis
 
-## 2. Problem analysis and data preparation
+* **Scale:** train has 2.21M Source 1 and 10.32M Source 2/3 records; test has 1.73M
+  and 9.97M. There are 7.64M labelled pairs and 5.6% singletons. The Cartesian
+  product (about 10^13 pairs) is infeasible, so blocking is mandatory.
+* **Exclusivity:** all 7,638,365 labelled target IDs are unique. Every Source 2/3
+  record is matched to **at most one** Source 1 business, and we exploit this
+  explicitly (Section 4).
+* **Country:** in a labelled sample 100% of true pairs share the country label, so
+  blocking keys are scoped by the country string (an open set, so France is
+  handled with no special code).
+* **Name noise:** legal-suffix changes (Pvt Ltd / Private Limited / LLP / SARL /
+  SAS), duplicated or reordered words, character typos, digit-for-letter OCR
+  swaps (`F0rt`, `J0nes`, `lnvestment`), website forms (`maurewilliamscolombier.com`),
+  DBA names, and, for India, names written in **9 Indic scripts** (Devanagari,
+  Telugu, Kannada, Tamil, Bengali, Gujarati, Malayalam, Oriya, Gurmukhi).
+* **Address noise:** component reordering, abbreviations (St/Street/Saint, R/Rue,
+  AV/Avenue), missing components or entire addresses (about 3% blank), a literal
+  `null`, state names vs codes, leading zeros (`AF-0684` vs `AF-684`), and
+  house-number ranges.
+* Exact-name agreement is under 5% of true pairs, so similarity must be fuzzy.
 
-Training contains 2,206,821 Source 1 businesses and 10,320,219 Source 2/3 records.
-Test contains 1,732,544 Source 1 businesses and 9,969,589 Source 2/3 records.
-Training covers India and the US; test additionally includes 259,452 French
-Source 1 businesses. Countries are treated as open string labels rather than a
-fixed set of learned categories.
+### 2.2 Solution Strategy
 
-A complete streaming data scan found 123,247 training singletons (5.58%) and
-7,638,365 labeled pairs. Training target files contain 344,883 blank addresses;
-test target files contain 265,506. In a seeded sample of 2,000 training businesses
-with 6,971 positive pairs, only 4.86% of pairs had exactly equal names and 2.34%
-had exactly equal addresses. Exact-string joining alone would miss most matches.
+**Approach Type:** Blocking + two-stage gradient-boosted pair classifier + global assignment
+**Core Innovation:** stage-2 "competition" features that turn the at-most-one-owner
+property of Source 2/3 records into learned evidence, with the entire
+1.7M × 64-candidate test graph scored at once.
 
-For supervised development, reservoir sampling with seed 42 selects 6,000
-Source 1 businesses. Splits contain 4,198 training, 898 threshold-tuning, and
-904 held-out businesses. Splitting groups anchors that share labeled target
-records, and approximately stratifies by country and singleton status. Neither
-anchors nor labeled positive target groups cross partitions.
+---
 
-The initial experiment used 220,838 targets, including all positives of the
-sampled anchors and 200,000 background targets. The submitted model is trained
-and evaluated with retrieval over **all 10,320,219 training targets**. Labels
-are never stored in the search index. The target corpus is shared as unlabeled
-retrieval data across partitions. The classifier is still fitted on the 4,198
-training anchors, not on all 2.2 million labeled Source 1 businesses.
+## 3. Candidate Generation (Blocking)
 
-## 3. Candidate generation
+Every record is exploded into keys, each prefixed by type and country:
 
-Text normalization preserves Unicode letters, folds Latin accents, standardizes
-case and punctuation, and expands a fixed set of address abbreviations. An
-auxiliary name view removes common legal suffixes; the original normalized name
-is retained as a separate comparison feature. No geocoding, registration lookup,
-external entity database, or external business-data augmentation is used.
+| key | content |
+| --- | --- |
+| `n` | each core-name token (legal words removed) |
+| `p` | adjacent pairs of core-name tokens (sorted) |
+| `c` | first 8 chars of the space-free core name (catches `payneenterprises.com`) |
+| `a` | address tokens containing a digit (house/plot/PIN numbers) |
+| `w` | alphabetic address tokens of 4 or more characters (street, locality, city) |
+| `q` | a numeric address token joined with the following token (`3315_fremont`) |
 
-Country blocking selects an FTS5 index for each observed country. Three channels
-search normalized names, addresses, and character trigrams of names. Queries
-select up to 6 name terms, 7 address terms, and 10 trigrams using corpus document
-frequencies. A posting budget of 3,000 restricts matching to rare query terms;
-all selected query terms still contribute to BM25 ranking. If every available
-term exceeds that budget, the two rarest terms are intersected. The budget was
-chosen using timing and recall probes on training anchors.
+* Keys whose document frequency among Source 2/3 exceeds a per-type cap
+  (2,000 for `n`, `a` and `w`; 500 for `p`, `c` and `q`) are dropped as uninformative.
+* Each shared key adds `log(N/df)` to a pair score. Keys are joined in Polars in
+  chunks of 100k businesses, and the **top 64 targets per business** are kept.
+* **Candidate pairs generated:** 110,104,366 for test (mean 63.6 per business,
+  741 businesses with none); 139,984,627 for train.
+* **Recall ceiling:** 92.93% of all 7.64M labelled training pairs are among the
+  candidates (87.4% within the top 10). Full test blocking takes about 8 min.
+* **How we avoid losing true matches:** there are six complementary key families,
+  so a typo in one token, a transliterated name or a missing address still leaves
+  others. OCR repair and transliteration run before keying. Rare-key weighting
+  keeps specific tokens ahead of generic ones.
 
-Each channel returns at most 20 records. Their deduplicated union, at most 60
-records per Source 1 business, is the exact set scored by the classifier and
-written to `candidate_pairs.tsv`. No true labels are injected into evaluation
-candidates. The full-corpus holdout averages 46.24 candidates per anchor.
+`candidate_pairs.tsv` contains exactly these 64 (or fewer) candidates, which are
+all scored by the model; every match is a subset of them.
 
-The 93.82% holdout candidate recall measures the recall ceiling of this retrieval
-stage; it does not guarantee retention of every match. A perfect classifier
-limited to these candidates would reach 0.974992 macro F0.5 on this holdout.
+---
 
-## 4. Matching model and threshold
+## 4. Matching Model
 
-The model is CatBoostClassifier 1.2.10, trained from scratch on retrieved pairs.
-The CatBoost library is Apache-2.0 licensed; no third-party pretrained model is
-used. This is a 450-tree classifier of depth 6, far below the 8-billion-parameter
-limit. The saved model file is 526,000 bytes.
+**Features used (53):**
+- **Name features:** RapidFuzz ratio, token-sort, token-set, partial ratio and
+  Jaro-Winkler on the core name; ratio and token-set on the full name; ratio and
+  partial ratio on the space-free name; token Jaccard, containment both ways and
+  intersection size; lengths and token count; a non-Latin-script flag for each
+  side.
+- **Address features:** ratio, token-sort, token-set and partial ratio; token
+  Jaccard, containment and intersection; the same four on numeric tokens only;
+  first-number equality; a number-conflict flag; address lengths (0 means missing).
+- **Blocking features:** summed IDF score, number of shared keys, rank within the
+  business, score relative to the business's best and the target's best, the
+  target's rank among competing businesses, and candidate counts per business
+  and per target.
+- **Stage-2 context features (from stage-1 probability p1):** rank, max, sum and
+  count above 0.5 across the business's candidates; rank of this business among
+  all businesses claiming the target; max and sum over those claimants; best
+  *competing* claimant's p1; and p1 relative to the business's best.
 
-The 31 numeric features cover normalized-name and suffix-stripped-name fuzzy
-similarity, token sort/set/partial similarity, exact nonempty matches, token
-Jaccard and containment, name length and initials, Latin-script fraction
-difference, address similarity and missingness, number and postal-code
-agreement/conflict, inverse per-channel retrieval ranks, and channel count.
-IDs and country identities are not learned features.
+**Model type:** XGBoost gradient-boosted trees (Apache-2.0; hist on CUDA,
+depth 10, eta 0.08, early stopping on log-loss). There is no pretrained model;
+everything is trained from the challenge labels.
 
-Training uses binary Logloss, learning rate 0.075, L2 leaf regularization 5,
-64 numeric borders, random seed 42, and CPU execution. Early stopping allows
-50 rounds without tuning-Logloss improvement; this run retains all 450 trees.
-Retrieved nonmatches provide the negative examples. No synthetic positives are
-added to the evaluation candidate sets.
+**Training protocol (folds are hashes of the Source 1 id):** stage 1 is trained
+on fold 0 (validated on fold 1) and on fold 1 (validated on fold 0). Each model
+predicts the other fold, so stage-2 inputs are out-of-fold. Stage 2 is trained
+on fold 2, the threshold is tuned on fold 3, and fold 4 is an untouched holdout.
 
-Threshold **0.605** maximizes macro F0.5 on the 898-business tuning partition.
-For each business with true set T and prediction set P, the score is
-`1.25 * |T intersection P| / (0.25 * |T| + |P|)`; if both sets are empty, the
-score is 1. True matches missed during retrieval remain in the denominator.
-The reported holdout was used neither for fitting nor threshold selection.
-Classifier scores are not separately calibrated probabilities.
+**Threshold selection method:** grid search of the stage-2 probability (0.2 to
+0.95) maximizing per-business macro F0.5 on fold 3. The best value is **0.675**.
+After thresholding, each target is kept only for its highest-scoring business.
 
-## 5. Results and error analysis
+---
 
-| Split | Businesses | Macro F0.5 | Pair precision | Pair recall | Candidate recall |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Train | 4,198 | 0.924398 | 98.42% | 84.25% | 92.69% |
-| Tune | 898 | 0.896169 | 97.53% | 80.79% | 91.43% |
-| Holdout | 904 | 0.925549 | 97.17% | 84.59% | 93.82% |
+## 5. Results & Error Analysis
 
-Holdout contains 2,641 correctly predicted pairs, 77 false positives, and 481
-false negatives. Of the missed positive pairs, 193 were absent from retrieval
-and 288 were retrieved but rejected by the classifier. Singleton accuracy is
-92.45% across 53 singleton businesses. Predicting empty lists for everyone
-would score 0.058628 macro F0.5.
+Macro F0.5 over *all* Source 1 businesses in the fold, including singletons and
+businesses whose matches were missed by blocking:
 
-| Holdout country | Businesses | Macro F0.5 | Pair precision | Pair recall |
-| --- | ---: | ---: | ---: | ---: |
-| India | 363 | 0.884311 | 95.12% | 77.71% |
-| US | 541 | 0.953219 | 98.37% | 89.06% |
+| fold (about 220k businesses) | macro F0.5 | pair precision | pair recall |
+| --- | ---: | ---: | ---: |
+| fold 3, stage 1 only | 0.9442 | 98.79% | 88.81% |
+| fold 3, stage 2 (tuning) | 0.9491 | 99.10% | 89.51% |
+| **fold 4, stage 2 (holdout)** | **0.9494** | **99.13%** | **89.51%** |
+| fold 4, candidate oracle | 0.9703 | 100% | 92.91% |
 
-Manual inspection of saved holdout errors found false merges between near-equal
-names with conflicting street numbers, and ambiguous common names when the
-target address was missing. Misses included shortened or completely changed
-business names, missing addresses, and alternate-script names with too little
-shared address text. These are observed examples, not an exhaustive frequency
-breakdown of all error categories.
+* **F_0.5 Score (macro):** 0.9494 on the untouched holdout.
+* **Test sanity:** 92.7% of test businesses receive at least one match
+  (US 93.8%, India 91.8%, France 92.5%), with about 3.1–3.3 matches each. Train has
+  3.46 true matches per business and 94.4% non-singletons, which is consistent
+  with about 90% recall at 99% precision. France behaves like the labelled countries.
+* **Common false positives (preliminary, from spot checks):** businesses with generic names ("Prime Industries",
+  "Vision Clinic") at the same street, and chains or branches with the same name
+  in the same city.
+* **Common false negatives (preliminary):** the remaining 7% blocking misses (Indic-script names
+  whose transliteration differs strongly from the Latin name *and* whose address
+  is missing or very short; heavily abbreviated website names), plus correct
+  candidates rejected for low name similarity when the address is missing.
 
-France has no supplied labels, so French accuracy is unknown. Preserving French
-records and passing retrieval/output tests establishes functionality, not
-predictive quality. The lower India recall also indicates that alternate-script
-and severe-noise matching remain important limitations.
+---
 
-## 6. Test inference and output validation
+## 6. Conclusion
 
-Inference uses 8 independent CPU workers on an Apple M4 with 16 GB RAM. Each
-worker scores batches with one CatBoost thread. SQLite connections are read-only;
-file-backed memory mappings allow index pages to be shared through the OS.
-Chunks of 128 anchors are saved atomically with input and output hashes. A
-resume verifies completed chunks and rejects changed inputs, model, code, or
-chunk size. Final TSVs merge in the original Source 1 order.
+Cheap, high-recall key blocking combined with a strong pairwise model gets most of
+the way. The largest single gain came from treating the problem globally: the
+stage-2 features, which see every business competing for a record, lifted macro
+F0.5 by 0.5 points at higher precision. The pipeline runs end to end in about an
+hour on one desktop (CPU for text, GPU for the model). The next gains are in
+blocking recall (learned transliteration dictionary, phonetic keys) and in
+clustering Source 2 / Source 3 records with each other.
 
-<!-- FULL_TEST_RESULTS -->
-The initial Mac run was intentionally stopped before completion to move the
-workload to a desktop. No completed full-test submission is claimed. Final
-counts and validation evidence are inserted automatically into the packaged
-write-up after a full run succeeds.
-<!-- END_FULL_TEST_RESULTS -->
+---
 
-The streaming validator checks exact headers, all required Source 1 rows,
-uniqueness, target prefixes and existence against raw test Source 2/3 files,
-empty lists, and strict match/candidate subset membership. It retains source ID
-sets instead of all candidate mappings. The organizer's validator passed on the
-904-row full-corpus development holdout; full test validation uses the streaming
-checker to keep memory bounded. No test-set accuracy or leaderboard result is
-claimed.
+## Appendix
 
-Parallel inference exactly reproduced both serial exports for all 904 holdout
-businesses. A 768-business test sample, including France, gave identical files
-with 4, 6, and 8 workers. Its 35,352 candidate pairs passed streaming validation
-against all 9,969,589 raw test target IDs. Tests cover metric handling, grouped
-splits, retrieval ranking, Unicode, missing fields, recovery after interruption,
-damaged-checkpoint rejection, and malformed submissions.
+### A. Code Artefacts
 
-## 7. Conclusions and limitations
+`code/business_entity_resolution/` contains `src/er_v2/` (all source),
+`models/v2/` (trained models, threshold, validation metrics), `README.md` (exact
+commands) and `requirements.txt` (pinned). The entry points, run in order, are
+`er_v2.prepare`, `er_v2.run_block`, `er_v2.run_features`, `er_v2.train` and
+`er_v2.predict`. They produce `output/matching_results.tsv` and
+`output/candidate_pairs.tsv`. Both files pass the official validator with
+`--check-ids`.
 
-This baseline makes full-corpus entity matching feasible on a 16 GB CPU laptop
-through selective lexical retrieval and inexpensive pair classification.
-Precision is strong on the sampled full-corpus holdout, but missed candidates,
-ambiguous names, missing addresses, and cross-script variation limit recall.
-Larger supervised samples and transliteration or multilingual retrieval are
-future experiments; they are not part of these submitted predictions.
+### B. Compute
 
-## Appendix: code and reproducibility
-
-`code/business_entity_resolution/src/er_baseline/` contains data preparation,
-retrieval, features, training, inference, scoring, validation, and packaging.
-The included README gives commands using only the supplied challenge data.
-Pinned dependencies, unit tests, frozen model weights, feature configuration,
-and development metrics accompany the source. The exact saved model can be
-used to regenerate both output files; separate instructions reproduce training.
-
-The archive excludes raw datasets, the original dataset ZIP, virtual environments,
-search indexes, and intermediate chunk files. Only the two completed prediction
-files and their validation receipt are included under `output/`.
+i9-13900K, 32 GB RAM, RTX 3060 12 GB. The timings are: normalization 45 s
+(all files, 28 processes); blocking 8 min for test and 11 min for train;
+features 7 min for test and 11 min for train; two-stage training with scoring
+of all train pairs 11 min; test inference 4 min.

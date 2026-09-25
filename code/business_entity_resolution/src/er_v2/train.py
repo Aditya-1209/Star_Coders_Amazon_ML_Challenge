@@ -1,4 +1,4 @@
-"""Stage 4: two-stage LightGBM matcher, trained and evaluated on train folds.
+"""Stage 4: two-stage gradient-boosted (XGBoost, CUDA) matcher, trained and evaluated on train folds.
 
 Stage 1 scores each pair from its own features. Stage 2 adds context from the
 stage-1 scores: how the pair ranks among its Source 1 record's candidates and
@@ -15,7 +15,7 @@ import json
 import time
 from pathlib import Path
 
-import lightgbm as lgb
+import xgboost as xgb
 import numpy as np
 import polars as pl
 
@@ -23,9 +23,16 @@ from .features import feature_names
 from .metrics import macro_f05
 
 N_FOLDS = 10
-PARAMS = dict(objective="binary", learning_rate=0.08, num_leaves=127, min_data_in_leaf=100,
-              feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=1.0,
-              num_threads=0, verbose=-1, seed=42)
+PARAMS = dict(objective="binary:logistic", eval_metric="logloss", tree_method="hist",
+              device="cuda", eta=0.08, max_depth=10, min_child_weight=5, subsample=0.8,
+              colsample_bytree=0.8, reg_lambda=1.0, max_bin=256, seed=42)
+
+
+def predict(model: xgb.Booster, x) -> np.ndarray:
+    """Predict with the best iteration; runs on the GPU when available."""
+    it = getattr(model, "best_iteration", None)
+    rng = (0, it + 1) if it is not None else (0, 0)
+    return model.inplace_predict(x, iteration_range=rng)
 
 
 def fold_expr() -> pl.Expr:
@@ -46,27 +53,28 @@ def X(df: pl.DataFrame, feats: list[str]):
     return df.select(pl.col(feats).cast(pl.Float32)).to_numpy()
 
 
-def fit(df: pl.DataFrame, feats: list[str], valid: pl.DataFrame | None, rounds: int) -> lgb.Booster:
-    dtrain = lgb.Dataset(X(df, feats), df["label"].to_numpy(), feature_name=feats,
-                         free_raw_data=True)
-    sets, cbs = [dtrain], [lgb.log_evaluation(100)]
+def fit(df: pl.DataFrame, feats: list[str], valid: pl.DataFrame | None, rounds: int) -> xgb.Booster:
+    dtrain = xgb.QuantileDMatrix(X(df, feats), df["label"].to_numpy(), feature_names=feats)
+    evals = [(dtrain, "train")]
+    kw = {}
     if valid is not None:
-        sets.append(lgb.Dataset(X(valid, feats), valid["label"].to_numpy(), reference=dtrain))
-        cbs.append(lgb.early_stopping(50, verbose=False))
-    return lgb.train(PARAMS, dtrain, rounds, valid_sets=sets, callbacks=cbs)
+        evals.append((xgb.QuantileDMatrix(X(valid, feats), valid["label"].to_numpy(),
+                                          feature_names=feats, ref=dtrain), "valid"))
+        kw["early_stopping_rounds"] = 50
+    return xgb.train(PARAMS, dtrain, rounds, evals=evals, verbose_eval=100, **kw)
 
 
-def stage1_scores(folder: Path, models: dict[int, lgb.Booster], default: lgb.Booster, feats) -> pl.DataFrame:
+def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: xgb.Booster, feats) -> pl.DataFrame:
     """Out-of-fold stage-1 probability for every pair in the folder."""
     out = []
     for p in sorted(folder.glob("part_*.parquet")):
         df = pl.read_parquet(p).with_columns(fold_expr())
         x = X(df, feats)
-        pred = default.predict(x, num_threads=0)
+        pred = predict(default, x)
         for fold, model in models.items():
             mask = (df["fold"] == fold).to_numpy()
             if mask.any():
-                pred[mask] = model.predict(x[mask], num_threads=0)
+                pred[mask] = predict(model, x[mask])
         out.append(df.select("sidx", "tidx").with_columns(p1=pl.Series(pred.astype(np.float32))))
     return pl.concat(out)
 
@@ -116,9 +124,9 @@ def main() -> None:
     m0 = fit(base.filter(pl.col("fold") == 0), f1,
              base.filter(pl.col("fold") == 1).sample(2_000_000, seed=1), args.rounds)
     m1 = fit(base.filter(pl.col("fold") == 1), f1,
-             base.filter(pl.col("fold") == 0).sample(2_000_000, seed=1), m0.best_iteration or args.rounds)
+             base.filter(pl.col("fold") == 0).sample(2_000_000, seed=1), (m0.best_iteration or args.rounds) + 1)
     del base
-    m0.save_model(str(mdir / "stage1.txt"))
+    m0.save_model(str(mdir / "stage1.json"))
     print(f"stage1 trained ({m0.best_iteration} it), {time.time() - t:.0f}s", flush=True)
 
     scores = stage1_scores(folder, {0: m1, 1: m0}, m0, f1)
@@ -133,7 +141,7 @@ def main() -> None:
     va = load_feats(folder, [3]).sample(2_000_000, seed=2).join(ctx, on=["sidx", "tidx"], how="left")
     m2 = fit(tr, f2, va, args.rounds)
     del tr, va
-    m2.save_model(str(mdir / "stage2.txt"))
+    m2.save_model(str(mdir / "stage2.json"))
     print(f"stage2 trained ({m2.best_iteration} it), {time.time() - t:.0f}s", flush=True)
 
     ev = []
@@ -141,7 +149,7 @@ def main() -> None:
         held = pl.read_parquet(p).with_columns(fold_expr()).filter(pl.col("fold") >= 3)
         held = held.join(ctx, on=["sidx", "tidx"], how="left")
         ev.append(held.select("sidx", "tidx", "fold", "p1", "label").with_columns(
-            p2=pl.Series(m2.predict(X(held, f2), num_threads=0).astype(np.float32))))
+            p2=pl.Series(predict(m2, X(held, f2)).astype(np.float32))))
     ev = pl.concat(ev)
     del ctx
     ev.write_parquet(work / "eval_preds.parquet")

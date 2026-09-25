@@ -11,11 +11,11 @@ import json
 import time
 from pathlib import Path
 
-import lightgbm as lgb
+import xgboost as xgb
 import numpy as np
 import polars as pl
 
-from .train import X, context_features, decide
+from .train import X, context_features, decide, predict
 
 
 def write_lists(path: Path, s1: pl.DataFrame, pairs: pl.DataFrame, tg_ids: pl.Series, col: str) -> None:
@@ -39,8 +39,10 @@ def main() -> None:
     meta = json.loads((mdir / "metrics.json").read_text())
     thr = args.threshold if args.threshold is not None else meta["threshold"]
     f1, f2 = meta["stage1_features"], meta["stage2_features"]
-    m1 = lgb.Booster(model_file=str(mdir / "stage1.txt"))
-    m2 = lgb.Booster(model_file=str(mdir / "stage2.txt"))
+    m1 = xgb.Booster(model_file=str(mdir / "stage1.json"))
+    m2 = xgb.Booster(model_file=str(mdir / "stage2.json"))
+    m1.set_param({"device": "cuda"})
+    m2.set_param({"device": "cuda"})
     t = time.time()
 
     parts = sorted((work / "feats_test").glob("part_*.parquet"))
@@ -48,7 +50,7 @@ def main() -> None:
     for p in parts:
         df = pl.read_parquet(p)
         scores.append(df.select("sidx", "tidx").with_columns(
-            p1=pl.Series(m1.predict(X(df, f1), num_threads=0).astype(np.float32))))
+            p1=pl.Series(predict(m1, X(df, f1)).astype(np.float32))))
     scores = pl.concat(scores)
     ctx = context_features(scores)
     print(f"stage1 done {len(scores):,} pairs, {time.time() - t:.0f}s", flush=True)
@@ -58,7 +60,7 @@ def main() -> None:
     for p in parts:
         df = pl.read_parquet(p).join(ctx, on=["sidx", "tidx"], how="left", maintain_order="left")
         preds.append(df.select("sidx", "tidx").with_columns(
-            p2=pl.Series(m2.predict(X(df, f2), num_threads=0).astype(np.float32))))
+            p2=pl.Series(predict(m2, X(df, f2)).astype(np.float32))))
     preds = pl.concat(preds)
     preds.write_parquet(work / "test_preds.parquet")
     print(f"stage2 done, {time.time() - t:.0f}s", flush=True)
