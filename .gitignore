@@ -19,3 +19,5 @@ submissions/
 .env
 .env.*
 !.env.example
+.venv312/
+work/
