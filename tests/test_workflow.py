@@ -65,7 +65,7 @@ class WorkflowTests(unittest.TestCase):
             (root / "output/matching_results.tsv").write_text("corrupt\n")
             with self.assertRaisesRegex(ValueError, "Validated output has changed"):
                 package_submission(root / "output", ROOT / "models/baseline_full_corpus",
-                                   ROOT / "code/business_entity_resolution", ROOT / "Documentation_template.md",
+                                   ROOT / "code/business_entity_resolution", ROOT / "docs/legacy/Documentation_template_baseline.md",
                                    root / "should_not_exist.zip")
             self.assertFalse((root / "should_not_exist.zip").exists())
 
