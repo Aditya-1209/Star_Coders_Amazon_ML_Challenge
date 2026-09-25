@@ -24,6 +24,10 @@ from .block import generate
 
 ANCHOR = 0.5
 HOP_K = 10
+# A two-hop candidate is kept only if it resembles one of the business's anchors on
+# both name and address (min of the two token-set scores). Measured on fold 3:
+# 19.7 -> 5.6 candidates per Source 1 at unchanged macro F0.5 (0.9631 -> 0.9630).
+HOP_MIN_SUPPORT = 50
 
 
 def anchors_of(stage2: pl.DataFrame) -> pl.DataFrame:
