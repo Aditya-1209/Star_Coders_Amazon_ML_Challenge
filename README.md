@@ -1,5 +1,11 @@
 # Star Coders - Amazon ML Challenge
 
+> **r5 branch:** use [the r5 desktop instructions](docs/README_r5.md) and
+> `scripts/run_r5.py` for the current XGBoost experiment based on r2.
+> It requires fresh training. Measured sample results and speed limitations are
+> documented there; 97.5% leaderboard performance has not been demonstrated.
+> The remainder of this README describes the historical CatBoost workflow.
+
 Match noisy business records from Source 2 and Source 3 to every Source 1 business.
 The pipeline produces both required TSVs and a verified submission ZIP, using only
 the challenge dataset. **You can run the included trained model immediately;

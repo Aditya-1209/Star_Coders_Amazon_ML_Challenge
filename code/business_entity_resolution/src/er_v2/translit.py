@@ -31,7 +31,7 @@ def learn(dataset: Path, min_count: int = 2, min_share: float = 0.5) -> dict[str
     rd = lambda f: pl.read_csv(d / f, separator="\t", quote_char=None, infer_schema=False)
     gt = rd("train_ground_truth.tsv").with_columns(pl.col("matched_entity_ids").str.split(","))
     gt = gt.explode("matched_entity_ids").drop_nulls()
-    # Learn only from training folds (0-2): the tuning/holdout folds 3-4 stay unseen.
+    # Exclude tuning/holdout folds 3/4 from supervised normalization.
     from .train import fold_expr
     s1 = rd("train_source1.tsv").with_row_index("sidx").with_columns(pl.col("sidx").cast(pl.UInt32))
     s1 = s1.filter(~fold_expr().is_in([3, 4])).select("entity_id", n1="business_name")
@@ -65,7 +65,7 @@ def main() -> None:
     args = ap.parse_args()
     m = learn(Path(args.dataset))
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps(m, ensure_ascii=False, indent=0, sort_keys=True))
+    Path(args.out).write_text(json.dumps(m, ensure_ascii=False, indent=0, sort_keys=True), encoding="utf-8")
     print(f"{len(m):,} token mappings -> {args.out}")
 
 

@@ -1,0 +1,24 @@
+{
+  "r2_commit": "427aa32",
+  "pairs": 100000,
+  "workers": 2,
+  "seconds": {
+    "r2": [
+      4.022961199996644,
+      3.1350061999983154,
+      3.128010300002643
+    ],
+    "r5": [
+      3.053425599995535,
+      2.528120700000727,
+      2.6121515999984695
+    ]
+  },
+  "median_seconds": {
+    "r2": 3.1350061999983154,
+    "r5": 2.6121515999984695
+  },
+  "all_original_features_exactly_equal": true,
+  "scope": "Feature kernel only; excludes per-record preparation, blocking, training, and inference.",
+  "kernel_speedup": 1.2001624254886862
+}

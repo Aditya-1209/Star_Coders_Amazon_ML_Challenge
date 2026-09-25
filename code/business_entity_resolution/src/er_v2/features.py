@@ -14,7 +14,7 @@ from rapidfuzz.distance import JaroWinkler
 
 STRING_FEATURES = [
     ("core", "core_ratio", fuzz.ratio),
-    ("core", "core_tsort", fuzz.token_sort_ratio),
+    ("core_sorted", "core_tsort", fuzz.ratio),
     ("core", "core_tset", fuzz.token_set_ratio),
     ("core", "core_partial", fuzz.partial_ratio),
     ("core", "core_jw", JaroWinkler.normalized_similarity),
@@ -23,7 +23,7 @@ STRING_FEATURES = [
     ("cc", "cc_ratio", fuzz.ratio),
     ("cc", "cc_partial", fuzz.partial_ratio),
     ("addr", "addr_ratio", fuzz.ratio),
-    ("addr", "addr_tsort", fuzz.token_sort_ratio),
+    ("addr_sorted", "addr_tsort", fuzz.ratio),
     ("addr", "addr_tset", fuzz.token_set_ratio),
     ("addr", "addr_partial", fuzz.partial_ratio),
 ]
@@ -35,8 +35,10 @@ def _record_cols(df: pl.DataFrame) -> pl.DataFrame:
         "idx",
         name=pl.col("name_n"),
         core=pl.col("core_n"),
+        core_sorted=pl.col('core_n').str.split(' ').list.sort().list.join(' '),
         cc=pl.col("core_n").str.replace_all(" ", ""),
         addr=pl.col("addr_n"),
+        addr_sorted=pl.col('addr_n').str.split(' ').list.sort().list.join(' '),
         ntok=pl.col("core_n").str.split(" ").list.eval(pl.element().filter(pl.element() != "")),
         atok=pl.col("addr_n").str.split(" ").list.eval(pl.element().filter(pl.element() != "")),
         nonlatin=(~pl.col("business_name").str.contains(r"^[\x00-\x7FÀ-ɏ]*$")).cast(pl.Int8),
@@ -73,13 +75,19 @@ def _jacc(a: str, b: str, prefix: str) -> list[pl.Expr]:
     ]
 
 
-def compute(pairs: pl.DataFrame) -> pl.DataFrame:
+def compute(pairs: pl.DataFrame, workers: int = -1) -> pl.DataFrame:
     feats = {}
+    # Sort tokens once per record, then ratio equals token_sort_ratio on the
+    # normalized whitespace. Convert each field once, not once per scorer.
+    groups = {}
     for field, name, scorer in STRING_FEATURES:
-        a = pairs[field + "_l"].to_list()
-        b = pairs[field + "_r"].to_list()
-        feats[name] = process.cpdist(a, b, scorer=scorer, workers=-1, dtype=np.float32)
-    f = pl.DataFrame(feats)
+        groups.setdefault(field, []).append((name, scorer))
+    for field, scorers in groups.items():
+        a = pairs[field + '_l'].to_list()
+        b = pairs[field + '_r'].to_list()
+        for name, scorer in scorers:
+            feats[name] = process.cpdist(a, b, scorer=scorer, workers=workers, dtype=np.float32)
+    f = pl.DataFrame({name: feats[name] for _, name, _ in STRING_FEATURES})
     tok = pairs.select(
         *_jacc("ntok_l", "ntok_r", "ntok"),
         *_jacc("atok_l", "atok_r", "atok"),
@@ -104,7 +112,10 @@ def compute(pairs: pl.DataFrame) -> pl.DataFrame:
         t_nc=pl.col("t_nc"),
         s_nc=pl.col("s_nc"),
     )
-    return pl.concat([pairs.select("sidx", "tidx"), f, tok], how="horizontal")
+    frames = [pairs.select("sidx", "tidx"), f, tok]
+    if 'rescue' in pairs.columns:
+        frames.append(pairs.select('rescue'))
+    return pl.concat(frames, how="horizontal")
 
 
 def add_block_context(cands: pl.DataFrame) -> pl.DataFrame:
