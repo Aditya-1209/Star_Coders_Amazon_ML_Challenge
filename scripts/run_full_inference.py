@@ -107,7 +107,7 @@ def run(args):
                 raise ValueError(f"Output changed before validation: {name}")
         status("packaging", rows=validation["rows"])
         package = package_submission(output, model, ROOT / "code/business_entity_resolution",
-                                     ROOT / "Documentation_template.md", args.submission)
+                                     ROOT / "docs/legacy/Documentation_template_baseline.md", args.submission)
         status("complete", validation=str(output / "validation.json"), rows=validation["rows"],
                output_files=validation["output_files"], submission=package["archive"])
         print("Full test inference, validation, and submission packaging completed successfully.", flush=True)
