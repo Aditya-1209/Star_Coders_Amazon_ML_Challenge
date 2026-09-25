@@ -42,12 +42,13 @@ def anchors_of(stage2: pl.DataFrame) -> pl.DataFrame:
     return a.select("sidx", a="tidx", pa="p2")
 
 
-def expand(anchors: pl.DataFrame, tkeys: pl.DataFrame, tindex: pl.DataFrame) -> pl.DataFrame:
+def expand(anchors: pl.DataFrame, tkeys: pl.DataFrame, tindex: pl.DataFrame,
+           block_chunk: int = 5_000) -> pl.DataFrame:
     """Two-hop candidates: (sidx, tidx, hop_score, hop_rank, hop_n)."""
     if anchors.is_empty() or tindex.is_empty():
         return pl.DataFrame(schema=HOP_SCHEMA)
     ak = tkeys.join(anchors.select(idx="a").unique(), on="idx", how="semi")
-    nb = generate(ak, tindex, top_k=HOP_K + 1, verbose=False)
+    nb = generate(ak, tindex, top_k=HOP_K + 1, chunk=block_chunk, verbose=False)
     nb = nb.rename({"sidx": "a", "tidx": "t"}).filter(pl.col("a") != pl.col("t"))
     # If the source record was absent from its own hits, HOP_K+1 still needs trimming.
     nb = nb.filter(pl.col("brank").rank("ordinal").over("a") <= HOP_K)

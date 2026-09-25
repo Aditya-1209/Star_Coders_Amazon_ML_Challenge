@@ -23,6 +23,7 @@ from .features import feature_names
 from .metrics import macro_f05
 from .decision import best_per_target, tune_threshold
 from .runtime import feature_parts, positive_int
+from .matrix import quantile_matrix
 
 N_FOLDS = 10
 STAGE1_GROUPS = ((0, 8), (1, 9))
@@ -89,19 +90,19 @@ def X(df: pl.DataFrame, feats: list[str]):
 
 
 def fit(df: pl.DataFrame, feats: list[str], valid: pl.DataFrame | None, rounds: int,
-        params: dict | None = None) -> xgb.Booster:
+        params: dict | None = None, matrix_batch_rows: int = 100_000) -> xgb.Booster:
     if df.is_empty() or df["label"].n_unique() < 2:
         raise ValueError("Training fold must contain positive and negative candidate pairs")
-    dtrain = xgb.QuantileDMatrix(X(df, feats), df["label"].to_numpy(), feature_names=feats)
+    params = dict(PARAMS if params is None else params)
+    dtrain = quantile_matrix(df, feats, matrix_batch_rows, params)
     evals = [(dtrain, "train")]
     kw = {}
     if valid is not None:
         if valid.is_empty():
             raise ValueError("Validation fold has no candidate pairs")
-        evals.append((xgb.QuantileDMatrix(X(valid, feats), valid["label"].to_numpy(),
-                                          feature_names=feats, ref=dtrain), "valid"))
+        evals.append((quantile_matrix(valid, feats, matrix_batch_rows, params, reference=dtrain), "valid"))
         kw["early_stopping_rounds"] = 50
-    return xgb.train(PARAMS if params is None else params, dtrain, rounds, evals=evals, verbose_eval=100, **kw)
+    return xgb.train(params, dtrain, rounds, evals=evals, verbose_eval=100, **kw)
 
 
 def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: list[xgb.Booster], feats,
@@ -113,35 +114,77 @@ def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: list[xg
     out = []
     for p in feature_parts(folder):
         df = pl.read_parquet(p).with_columns(fold_expr())
-        pred = predict_ensemble(default, df, feats, batch_rows)
+        pred = np.empty(len(df), dtype=np.float32)
+        unseen = ~df["fold"].is_in(list(models))
+        if unseen.any():
+            pred[unseen.to_numpy()] = predict_ensemble(default, df.filter(unseen), feats, batch_rows)
+        grouped = {}
         for fold, model in models.items():
-            mask = (df["fold"] == fold).to_numpy()
+            grouped.setdefault(id(model), (model, []))[1].append(fold)
+        for model, folds in grouped.values():
+            mask = df["fold"].is_in(folds).to_numpy()
             if mask.any():
-                pred[mask] = predict_frame(model, df.filter(pl.col("fold") == fold), feats, batch_rows)
+                pred[mask] = predict_frame(model, df.filter(pl.col("fold").is_in(folds)), feats, batch_rows)
         out.append(df.select("sidx", "tidx").with_columns(p1=pl.Series(pred.astype(np.float32))))
     return pl.concat(out)
 
 
 def context_features(scores: pl.DataFrame) -> pl.DataFrame:
-    """Stage-2 context from stage-1 scores; target competition is global."""
-    scores = scores.sort(["p1", "sidx", "tidx"], descending=[True, False, False])
+    """Global competition features, preserving input rows for bounded scoring.
+
+    Order each ranking's ties inside its group, instead of globally reordering
+    every candidate. The final join explicitly preserves the input order.
+    """
     s = scores.with_columns(
-        s_rank=pl.col("p1").rank("ordinal", descending=True).over("sidx").cast(pl.UInt16),
+        s_rank=pl.col("p1").rank("ordinal", descending=True).over("sidx", order_by="tidx").cast(pl.UInt16),
         s_max=pl.col("p1").max().over("sidx"),
         s_sum=pl.col("p1").sum().over("sidx"),
         s_n50=(pl.col("p1") > 0.5).sum().over("sidx").cast(pl.UInt16),
-        t_prank=pl.col("p1").rank("ordinal", descending=True).over("tidx").cast(pl.UInt16),
+        t_prank=pl.col("p1").rank("ordinal", descending=True).over("tidx", order_by="sidx").cast(pl.UInt16),
         t_max=pl.col("p1").max().over("tidx"),
         t_sum=pl.col("p1").sum().over("tidx"),
     )
     top2 = scores.group_by("tidx").agg(t_second=pl.col("p1").top_k(2).min(), t_cnt=pl.len())
-    s = s.join(top2, on="tidx", how="left")
+    s = s.join(top2, on="tidx", how="left", maintain_order="left")
     return s.with_columns(
         t_other=pl.when(pl.col("t_prank") == 1).then(
             pl.when(pl.col("t_cnt") > 1).then(pl.col("t_second")).otherwise(0.0))
         .otherwise(pl.col("t_max")),
         s_rel=pl.when(pl.col("s_max") > 0).then(pl.col("p1") / pl.col("s_max")).otherwise(0.0),
     ).drop("t_second", "t_cnt")
+
+
+def attach_context(features: pl.DataFrame, context: pl.DataFrame) -> pl.DataFrame:
+    """Attach already aligned columns; fail instead of silently mis-scoring IDs."""
+    if not features.select("sidx", "tidx").equals(context.select("sidx", "tidx")):
+        raise ValueError("Feature/context row order differs; regenerate scores from the same feature shards")
+    return features.hstack(context.drop("sidx", "tidx"))
+
+
+class ContextBatches:
+    """Retain only model-pruned rows, and select each shard by original offset."""
+
+    def __init__(self, context: pl.DataFrame, prune: float):
+        self.total_rows = len(context)
+        self.position = 0
+        self.frame = context.with_row_index("_row").filter(pl.col("p1") >= prune)
+        self.row_positions = self.frame["_row"].to_numpy()
+
+    def attach(self, features: pl.DataFrame) -> pl.DataFrame:
+        start, stop = self.position, self.position + len(features)
+        if stop > self.total_rows:
+            raise ValueError("Feature shards contain more rows than the scored context")
+        lo, hi = np.searchsorted(self.row_positions, [start, stop])
+        part = self.frame.slice(int(lo), int(hi - lo))
+        keep = np.zeros(len(features), dtype=bool)
+        keep[self.row_positions[lo:hi] - start] = True
+        result = attach_context(features.filter(keep), part.drop("_row"))
+        self.position = stop
+        return result
+
+    def finish(self) -> None:
+        if self.position != self.total_rows:
+            raise ValueError("Feature shards ended before all scored context rows were consumed")
 
 
 def decide(pred: pl.DataFrame, threshold: float, score: str = "p2") -> pl.DataFrame:
@@ -158,6 +201,9 @@ def main() -> None:
     ap.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     ap.add_argument("--threads", type=positive_int, default=12)
     ap.add_argument("--batch-rows", type=positive_int, default=250_000)
+    ap.add_argument("--matrix-batch-rows", type=positive_int, default=100_000)
+    ap.add_argument("--hist-cache-nodes", type=positive_int, default=4096)
+    ap.add_argument("--predict-device", choices=["cpu", "cuda"], default=None)
     ap.add_argument("--rounds", type=positive_int, default=1500)
     ap.add_argument("--extra-stage1-folds", action=argparse.BooleanOptionalAction, default=True,
                     help="use folds 8/9 as additional training data; disable to reduce training RAM")
@@ -165,7 +211,9 @@ def main() -> None:
     work, mdir = Path(args.work), Path(args.model_dir)
     mdir.mkdir(parents=True, exist_ok=True)
     folder = work / "feats_train"
-    params = {**PARAMS, "device": args.device, "nthread": args.threads}
+    params = {**PARAMS, "device": args.device, "nthread": args.threads,
+              "max_cached_hist_node": args.hist_cache_nodes}
+    predict_device = args.predict_device or args.device
     t = time.time()
 
     sample = pl.read_parquet(feature_parts(folder)[0], n_rows=1)
@@ -179,12 +227,14 @@ def main() -> None:
     for group in groups:
         base = load_feats(folder, list(group))
         print(f"stage1 folds {group}: {len(base):,} pairs", flush=True)
-        rankers.append(fit(base, f1, valid1, args.rounds, params))
+        rankers.append(fit(base, f1, valid1, args.rounds, params, args.matrix_batch_rows))
         del base
     del valid1
     m0, m1 = rankers
     m0.save_model(str(mdir / "stage1.json"))
     m1.save_model(str(mdir / "stage1_b.json"))
+    for model in rankers:
+        model.set_param({"device": predict_device})
     print(f"stage1 ensemble trained, {time.time() - t:.0f}s", flush=True)
 
     held_out = {fold: m1 for fold in groups[0]}
@@ -196,34 +246,36 @@ def main() -> None:
 
     ctx_cols = [c for c in ctx.columns if c not in ("sidx", "tidx")]
     f2 = f1 + ctx_cols
-    ctx_full = ctx.filter(pl.col("p1") >= PRUNE)
+    ctx_full = ContextBatches(ctx, PRUNE)
     ctx = ctx.filter(fold_expr().is_in([2, 3, 4, 5]))
-    tr = load_feats(folder, [2, 5]).join(ctx, on=["sidx", "tidx"], how="left")
-    va = validation_sample(load_feats(folder, [3]), seed=2).join(ctx, on=["sidx", "tidx"], how="left")
-    m2 = fit(tr, f2, va, args.rounds, params)
+    tr = attach_context(load_feats(folder, [2, 5]), ctx.filter(fold_expr().is_in([2, 5])))
+    va = validation_sample(attach_context(load_feats(folder, [3]), ctx.filter(fold_expr() == 3)), seed=2)
+    del ctx
+    m2 = fit(tr, f2, va, args.rounds, params, args.matrix_batch_rows)
     del tr, va
     m2.save_model(str(mdir / "stage2.json"))
+    m2.set_param({"device": predict_device})
     print(f"stage2 trained ({m2.best_iteration} it), {time.time() - t:.0f}s", flush=True)
 
     # stage-2 scores for every pruned pair of every fold (stage 3 builds on them)
     allp = []
     for p in feature_parts(folder):
         part = pl.read_parquet(p).with_columns(fold_expr())
-        part = part.join(ctx_full, on=["sidx", "tidx"], how="inner").filter(pl.col("p1") >= PRUNE)
+        part = ctx_full.attach(part)
         allp.append(part.select("sidx", "tidx", "fold", "p1", "label").with_columns(
             p2=pl.Series(predict_frame(m2, part, f2, args.batch_rows))))
+    ctx_full.finish()
     allp = pl.concat(allp)
     allp.write_parquet(work / "stage2_train.parquet")
     del ctx_full, part, rankers, held_out
     ev = allp.filter(pl.col("fold").is_in([3, 4]))
-    del ctx
     del allp
     ev.write_parquet(work / "eval_preds.parquet")
 
     # truth + anchors for folds 3/4: all source1 records, incl. singletons / uncovered
     from .run_block import load_split
     from .run_features import ground_truth_pairs
-    s1, tg = load_split(work, "train")
+    s1, tg = load_split(work, "train", columns=["idx", "entity_id"])
     truth = ground_truth_pairs(Path(args.dataset), s1, tg).with_columns(fold_expr())
     anchors = s1.select(sidx=pl.col("idx").cast(pl.UInt32)).with_columns(fold_expr())
     del s1, tg
@@ -249,7 +301,9 @@ def main() -> None:
         results[f"fold{fold}_oracle"] = macro_f05(e.join(tr_, on=["sidx", "tidx"]), tr_, a)
     results["threshold"] = thr
     results["prune"] = PRUNE
-    results["runtime"] = {"device": args.device, "threads": args.threads, "batch_rows": args.batch_rows}
+    results["runtime"] = {"device": args.device, "predict_device": predict_device,
+                          "threads": args.threads, "batch_rows": args.batch_rows,
+                          "matrix_batch_rows": args.matrix_batch_rows, "hist_cache_nodes": args.hist_cache_nodes}
     results["stage2_training_folds"] = [2, 5]
     results["stage3_eligible_folds"] = [3, 4, 6, 7]
     results["feature_version"] = FEATURE_VERSION

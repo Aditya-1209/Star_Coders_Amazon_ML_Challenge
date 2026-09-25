@@ -1,0 +1,20 @@
+{
+  "name": "i9-13900K / 32 GB RAM / RTX 3060 12 GB",
+  "normalize_workers": 8,
+  "normalize_buffer_rows": 250000,
+  "polars_threads": 12,
+  "feature_workers": 12,
+  "train_threads": 12,
+  "predict_threads": 16,
+  "train_device": "cuda",
+  "predict_device": "cpu",
+  "block_chunk": 5000,
+  "feature_shard_pairs": 500000,
+  "matrix_batch_rows": 100000,
+  "predict_batch_rows": 100000,
+  "support_anchors": 1000,
+  "hist_cache_nodes": 4096,
+  "top_k": 64,
+  "name_k": 16,
+  "address_k": 8
+}

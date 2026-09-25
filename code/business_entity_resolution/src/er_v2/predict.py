@@ -19,7 +19,7 @@ from pathlib import Path
 import xgboost as xgb
 import polars as pl
 
-from .train import context_features, decide, predict_frame, predict_ensemble
+from .train import ContextBatches, context_features, decide, predict_frame, predict_ensemble
 from .decision import NO_MATCH_THRESHOLD
 from .runtime import feature_parts, positive_int
 
@@ -73,16 +73,17 @@ def main() -> None:
         scores.append(df.select("sidx", "tidx").with_columns(
             p1=pl.Series(predict_ensemble(rankers, df, f1, args.batch_rows))))
     scores = pl.concat(scores)
-    ctx = context_features(scores)
+    ctx = ContextBatches(context_features(scores), prune)
     print(f"stage1 done {len(scores):,} pairs, {time.time() - t:.0f}s", flush=True)
     del scores
 
     preds = []
     for p in parts:
-        df = pl.read_parquet(p).join(ctx, on=["sidx", "tidx"], how="left", maintain_order="left")
-        df = df.filter(pl.col("p1") >= prune)
+        df = ctx.attach(pl.read_parquet(p))
         preds.append(df.select("sidx", "tidx", "p1").with_columns(
             p2=pl.Series(predict_frame(m2, df, f2, args.batch_rows))))
+    ctx.finish()
+    del ctx, df
     preds = pl.concat(preds)
     preds.write_parquet(work / "test_preds.parquet")
     print(f"stage2 done on {len(preds):,} pruned candidates (p1>={prune}), {time.time() - t:.0f}s", flush=True)

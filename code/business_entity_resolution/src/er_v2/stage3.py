@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import tempfile
 import time
 from pathlib import Path
 
 import polars as pl
+import numpy as np
 import xgboost as xgb
 
 from .block import build_target_index, make_keys
@@ -20,7 +22,7 @@ from .features import compute, pair_frame, record_frames
 from .decision import NO_MATCH_THRESHOLD, blend_scores, tune_blend
 from .graph import anchors_of, expand, support_features
 from .metrics import macro_f05
-from .run_block import load_split
+from .run_block import load_split, parquet_rows, split_countries, target_count
 from .runtime import feature_parts, positive_int
 from .train import FEATURE_VERSION, PARAMS, decide, fit, fold_expr, predict_frame
 
@@ -29,12 +31,35 @@ BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc"
 
 
 def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
-          batch_rows: int = 250_000, support_anchors: int = 5_000, workers: int = 12) -> pl.DataFrame:
+          batch_rows: int = 250_000, support_anchors: int = 5_000, workers: int = 12,
+          block_chunk: int = 5_000, country_partition: bool = False) -> pl.DataFrame:
+    options = dict(batch_rows=batch_rows, support_anchors=support_anchors,
+                   workers=workers, block_chunk=block_chunk)
+    if not country_partition:
+        return _build_country(split, work, stage2, feats_dir, log, **options)
+    with tempfile.TemporaryDirectory(prefix="graph-", dir=work) as temporary:
+        paths = []
+        for index, country in enumerate(split_countries(work, split)):
+            log(f"building graph for {country}")
+            frame = _build_country(split, work, stage2, feats_dir, log, country=country, **options)
+            path = Path(temporary) / f"part_{index:03d}.parquet"
+            frame.write_parquet(path)
+            paths.append(path)
+            del frame
+            gc.collect()
+        return pl.scan_parquet(paths).collect(engine="streaming")
+
+
+def _build_country(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
+                   batch_rows: int, support_anchors: int, workers: int, block_chunk: int,
+                   country: str | None = None) -> pl.DataFrame:
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
-    s1, tg = load_split(work, split)
+    s1, tg = load_split(work, split, country)
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
     tg = tg.with_columns(pl.col("idx").cast(pl.UInt32))
-    n_s2 = len(pl.read_parquet(work / "norm" / f"{split}_source2.parquet", columns=["idx"]))
+    n_s2 = parquet_rows(work / "norm" / f"{split}_source2.parquet")
+    if country is not None:
+        stage2 = stage2.join(s1.select(sidx="idx"), on="sidx", how="semi")
     anchors = anchors_of(stage2)
     log(f"anchors {len(anchors):,}")
 
@@ -43,10 +68,10 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
         hop = pl.DataFrame(schema=HOP_SCHEMA)
     else:
         tkeys = make_keys(tg)
-        tindex = build_target_index(tkeys, len(tg))
+        tindex = build_target_index(tkeys, target_count(work, split))
         tkeys = tkeys.drop("kind")
         gc.collect()
-        hop = expand(anchors, tkeys, tindex)
+        hop = expand(anchors, tkeys, tindex, block_chunk=block_chunk)
         del tkeys, tindex
     gc.collect()
     log(f"two-hop pairs {len(hop):,}")
@@ -73,15 +98,21 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
         new_parts.append(compute(pair_frame(batch, left, right, n_s2), workers=workers).select(old.columns))
     newf = pl.concat(new_parts) if new_parts else old.head(0)
     log(f"computed features for {len(newf):,} new pairs")
-    base = pl.concat([old, newf.select(old.columns)], how="vertical_relaxed")
+    # New-hop blocking fields are null; retain the stored numeric types so a
+    # country with new hops has the same schema as one with only direct pairs.
+    base = pl.concat([old, newf.select(old.columns).cast(old.schema)])
     del old, newf, new_parts, new_pairs, left, s1, tg
     gc.collect()
 
     txt = right.select("idx", "core_r", "addr_r", "cc_r")
-    ids = pairs["sidx"].unique().sort()
+    pairs = pairs.sort("sidx", "tidx")
+    source_rows = pairs["sidx"].to_numpy()
+    ids = pairs["sidx"].unique(maintain_order=True)
     sup = []
     for i in range(0, len(ids), support_anchors):
-        chunk = pairs.join(pl.DataFrame({"sidx": ids[i:i + support_anchors]}), on="sidx", how="semi")
+        lo = int(np.searchsorted(source_rows, ids[i], side="left"))
+        hi = int(np.searchsorted(source_rows, ids[min(i + support_anchors, len(ids)) - 1], side="right"))
+        chunk = pairs.slice(lo, hi - lo)
         sup.append(support_features(chunk, anchors, txt, workers=workers))
     sup = pl.concat(sup) if sup else support_features(pairs, anchors, txt, workers=workers)
     del right
@@ -105,14 +136,21 @@ def main() -> None:
     ap.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     ap.add_argument("--threads", type=positive_int, default=12)
     ap.add_argument("--batch-rows", type=positive_int, default=250_000)
+    ap.add_argument("--matrix-batch-rows", type=positive_int, default=100_000)
+    ap.add_argument("--hist-cache-nodes", type=positive_int, default=4096)
+    ap.add_argument("--predict-device", choices=["cpu", "cuda"], default=None)
+    ap.add_argument("--block-chunk", type=positive_int, default=5_000)
+    ap.add_argument("--country-partition", action="store_true")
     ap.add_argument("--support-anchors", type=positive_int, default=5_000)
     ap.add_argument("--rounds", type=positive_int, default=2000)
     args = ap.parse_args()
     work, mdir = Path(args.work), Path(args.model_dir)
     t = time.time()
     log = lambda m: print(f"[{time.time() - t:6.0f}s] {m}", flush=True)
+    predict_device = args.predict_device or args.device
     build_options = {"batch_rows": args.batch_rows, "support_anchors": args.support_anchors,
-                     "workers": args.threads}
+                     "workers": args.threads, "block_chunk": args.block_chunk,
+                     "country_partition": args.country_partition}
     stage2_meta = json.loads((mdir / "metrics.json").read_text(encoding="utf-8"))
     if stage2_meta.get("feature_version") != FEATURE_VERSION:
         raise ValueError("Regenerate accuracy features and retrain er_v2.train before stage 3")
@@ -123,7 +161,7 @@ def main() -> None:
         keep = TRAIN_FOLDS + [TUNE_FOLD, HOLD_FOLD]
         st2 = st2.filter(pl.col("fold").is_in(keep)).drop("label", "fold")
         df = build("train", work, st2, work / "feats_train", log, **build_options)
-        s1, tg = load_split(work, "train")
+        s1, tg = load_split(work, "train", columns=["idx", "entity_id"])
         truth = ground_truth_pairs(Path(args.dataset), s1, tg)
         df = df.join(truth.with_columns(label=pl.lit(1, pl.Int8)), on=["sidx", "tidx"], how="left")
         df = df.with_columns(pl.col("label").fill_null(0), fold_expr())
@@ -131,10 +169,13 @@ def main() -> None:
         feats = feature_cols(df)
         tr = df.filter(pl.col("fold").is_in(TRAIN_FOLDS))
         va = df.filter(pl.col("fold") == TUNE_FOLD)
-        m3 = fit(tr, feats, va, args.rounds, {**PARAMS, "device": args.device, "nthread": args.threads})
+        m3 = fit(tr, feats, va, args.rounds,
+                 {**PARAMS, "device": args.device, "nthread": args.threads,
+                  "max_cached_hist_node": args.hist_cache_nodes}, args.matrix_batch_rows)
         del tr, va
         mdir.mkdir(parents=True, exist_ok=True)
         m3.save_model(str(mdir / "stage3.json"))
+        m3.set_param({"device": predict_device})
         log(f"stage3 trained ({m3.best_iteration} it)")
         ev = df.filter(pl.col("fold").is_in([TUNE_FOLD, HOLD_FOLD]))
         ev = ev.select("sidx", "tidx", "fold", "p2", "direct").with_columns(
@@ -151,8 +192,11 @@ def main() -> None:
         res = {**selection, "stage3_threshold": pure_threshold,
                "features": feats, "best_iteration": m3.best_iteration,
                "feature_version": FEATURE_VERSION, "selection_fold": TUNE_FOLD,
-               "runtime": {"device": args.device, "threads": args.threads,
-               "batch_rows": args.batch_rows, "support_anchors": args.support_anchors}}
+               "runtime": {"device": args.device, "predict_device": predict_device,
+               "threads": args.threads, "matrix_batch_rows": args.matrix_batch_rows,
+               "hist_cache_nodes": args.hist_cache_nodes, "country_partition": args.country_partition,
+               "block_chunk": args.block_chunk, "batch_rows": args.batch_rows,
+               "support_anchors": args.support_anchors}}
         ev = blend_scores(ev, selection["stage3_weight"])
         ev.write_parquet(work / "eval_preds_stage3.parquet")
         for fold in (TUNE_FOLD, HOLD_FOLD):
@@ -181,7 +225,7 @@ def main() -> None:
     st2 = pl.read_parquet(work / "test_preds.parquet")
     df = build("test", work, st2, work / "feats_test", log, **build_options)
     m3 = xgb.Booster(model_file=str(mdir / "stage3.json"))
-    m3.set_param({"device": args.device, "nthread": args.threads})
+    m3.set_param({"device": predict_device, "nthread": args.threads})
     preds = df.select("sidx", "tidx", "p2").with_columns(
         p3=pl.Series(predict_frame(m3, df, meta["features"], args.batch_rows)))
     preds = blend_scores(preds, meta["stage3_weight"])

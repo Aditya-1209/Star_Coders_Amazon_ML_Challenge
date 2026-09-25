@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import gc
 import time
 from pathlib import Path
 
 import polars as pl
 
 from .features import add_block_context, compute, pair_frame, record_frames
-from .run_block import load_split
+from .run_block import load_split, parquet_rows, split_countries
 from .runtime import positive_int
 
 
@@ -29,6 +30,7 @@ def main() -> None:
     ap.add_argument("--split", required=True, choices=["train", "test"])
     ap.add_argument("--shard-pairs", type=positive_int, default=2_000_000)
     ap.add_argument("--workers", type=positive_int, default=12)
+    ap.add_argument("--country-partition", action="store_true")
     args = ap.parse_args()
     work = Path(args.work)
     out = work / f"feats_{args.split}"
@@ -37,35 +39,48 @@ def main() -> None:
     out.mkdir(parents=True)
     (out / "_INCOMPLETE").write_text("Feature generation has not completed.\n", encoding="utf-8")
     t = time.time()
-    s1, tg = load_split(work, args.split)
-    s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
-    tg = tg.with_columns(pl.col("idx").cast(pl.UInt32))
-    n_s2 = len(pl.read_parquet(work / "norm" / f"{args.split}_source2.parquet", columns=["idx"]))
-    cands = add_block_context(pl.read_parquet(work / f"cands_{args.split}.parquet"))
-    if args.split == "train":
-        gt = ground_truth_pairs(Path(args.dataset), s1, tg).with_columns(label=pl.lit(1, pl.Int8))
-        cands = cands.join(gt, on=["sidx", "tidx"], how="left").with_columns(pl.col("label").fill_null(0))
-    cands = cands.sort("sidx", "brank")
-    left, right = record_frames(s1, tg)
-    del s1, tg
-    sid = cands["sidx"]
-    n = len(cands)
-    start, shard = 0, 0
-    while start < n or shard == 0:
-        stop = min(start + args.shard_pairs, n)
-        while stop < n and sid[stop] == sid[stop - 1]:
-            stop += 1
-        part = cands.slice(start, stop - start)
-        feats = compute(pair_frame(part, left, right, n_s2), workers=args.workers)
-        if "label" in part.columns:
-            feats = feats.with_columns(part["label"])
-        destination = out / f"part_{shard:03d}.parquet"
-        temporary = destination.with_suffix(".parquet.tmp")
-        feats.write_parquet(temporary)
-        temporary.replace(destination)
-        print(f"shard {shard}: {stop:,}/{n:,} pairs, {time.time() - t:.0f}s", flush=True)
-        start, shard = stop, shard + 1
-    manifest = {"version": 1, "split": args.split, "pairs": n,
+    n_s2 = parquet_rows(work / "norm" / f"{args.split}_source2.parquet")
+    countries = split_countries(work, args.split) if args.country_partition else [None]
+    shard, total = 0, 0
+    for country in countries:
+        s1, tg = load_split(work, args.split, country)
+        s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
+        tg = tg.with_columns(pl.col("idx").cast(pl.UInt32))
+        candidates = pl.scan_parquet(work / f"cands_{args.split}.parquet")
+        if country is not None:
+            candidates = candidates.join(s1.select(sidx="idx").lazy(), on="sidx", how="semi")
+        cands = add_block_context(candidates.collect(engine="streaming"))
+        if args.split == "train":
+            gt = ground_truth_pairs(Path(args.dataset), s1, tg).with_columns(label=pl.lit(1, pl.Int8))
+            cands = cands.join(gt, on=["sidx", "tidx"], how="left").with_columns(pl.col("label").fill_null(0))
+            del gt
+        cands = cands.sort("sidx", "brank")
+        left, right = record_frames(s1, tg)
+        del s1, tg
+        sid = cands["sidx"]
+        n = len(cands)
+        total += n
+        start = 0
+        # Emit a typed empty shard only if the whole output is still empty.
+        while start < n or shard == 0:
+            stop = min(start + args.shard_pairs, n)
+            while stop < n and sid[stop] == sid[stop - 1]:
+                stop += 1
+            part = cands.slice(start, stop - start)
+            feats = compute(pair_frame(part, left, right, n_s2), workers=args.workers)
+            if "label" in part.columns:
+                feats = feats.with_columns(part["label"])
+            destination = out / f"part_{shard:04d}.parquet"
+            temporary = destination.with_suffix(".parquet.tmp")
+            feats.write_parquet(temporary)
+            temporary.replace(destination)
+            print(f"country={country or 'all'} shard {shard}: {stop:,}/{n:,} pairs, {time.time() - t:.0f}s", flush=True)
+            start, shard = stop, shard + 1
+            del part, feats
+        del cands, candidates, sid, left, right
+        gc.collect()
+    manifest = {"version": 1, "split": args.split, "pairs": total,
+                "country_partition": args.country_partition,
                 "parts": [{"name": p.name, "bytes": p.stat().st_size, "mtime_ns": p.stat().st_mtime_ns}
                           for p in sorted(out.glob("part_*.parquet"))]}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

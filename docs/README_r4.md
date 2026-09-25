@@ -8,6 +8,12 @@ does not measure r4.
 The older root `scripts/setup.sh` and `scripts/run_full_inference.py` run the
 CatBoost baseline. Use the commands below for the current XGBoost pipeline.
 
+**For the i9-13900K / 32 GB / RTX 3060 12 GB PC, use the
+[desktop launcher and resource profile](README_13900k_3060.md).** It applies
+country partitions, smaller batches, GPU training, CPU prediction, and
+stage-level resume automatically. The commands below are the general manual
+workflow, not the hardware-specific preset.
+
 ## Changes worth knowing before running
 
 - **Broader retrieval:** union the original combined top 64 with the top 16 by
@@ -43,6 +49,9 @@ CatBoost baseline. Use the commands below for the current XGBoost pipeline.
   features in batches, and groups support comparisons by 5,000 businesses
   instead of 300,000. Full normalized tables, candidate graphs, and training
   matrices still occupy memory: this is not an out-of-core training rewrite.
+  Training now constructs quantized matrices from bounded dense batches rather
+  than a full NumPy copy. The desktop profile also partitions blocking, feature
+  generation and graph construction by country while retaining global IDs/IDF.
 - **Regenerate candidates/features and retrain all three stages.** Model
   metadata must have `feature_version: r4-accuracy-1`. Older stage-3 models and
   the shipped stage-2 weights do not implement these accuracy changes.
@@ -216,7 +225,8 @@ stage-3 RapidFuzz threads; `POLARS_MAX_THREADS` must be set before Python starts
 None of these limits eliminate the memory used by the global candidate graph or
 the full training matrices.
 
-The v2 pipeline does not have the CatBoost runner's automatic resume. Do not
+Individual v2 commands do not have the CatBoost runner's chunk resume. The
+desktop launcher records and resumes completed stages. Do not
 resume a feature folder containing `_INCOMPLETE` or mix new files with old
 shards. Preserve the old folder for diagnosis and generate in a fresh workspace,
 or deliberately remove only the failed feature folder after stopping its process.

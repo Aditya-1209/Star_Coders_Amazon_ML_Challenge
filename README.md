@@ -1,5 +1,9 @@
 # Star Coders - Amazon ML Challenge
 
+> **i9-13900K / 32 GB / RTX 3060 12 GB:** use the [desktop run guide](docs/README_13900k_3060.md).
+> After extracting the dataset, Windows users can run `.\scripts\run_r4_pc.cmd`.
+> It sets up the environment, applies the PC profile, logs each stage, and supports stage-level resume.
+
 > **On branch `r4`, start with [the r4 run guide](docs/README_r4.md).** It covers
 > broader candidate retrieval, additional match features, a two-model XGBoost
 > ranker, and validation-selected graph blending. Regenerate features and retrain
