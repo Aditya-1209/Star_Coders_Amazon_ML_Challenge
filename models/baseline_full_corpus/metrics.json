@@ -1,0 +1,305 @@
+{
+  "evaluation_scope": {
+    "sampled_anchors": 6000,
+    "indexed_targets": 10320219,
+    "full_training_target_pool": true
+  },
+  "config": {
+    "threshold": 0.605,
+    "per_channel": 20,
+    "feature_names": [
+      "name_ratio",
+      "name_token_sort",
+      "name_token_set",
+      "name_partial",
+      "name_core_ratio",
+      "name_core_exact",
+      "name_token_jaccard",
+      "name_token_containment",
+      "name_length_ratio",
+      "name_initials_equal",
+      "name_is_other_initials",
+      "latin_fraction_difference",
+      "address_ratio",
+      "address_token_sort",
+      "address_token_set",
+      "address_partial",
+      "address_exact_nonempty",
+      "address_token_jaccard",
+      "address_token_containment",
+      "address_missing_left",
+      "address_missing_right",
+      "number_jaccard",
+      "number_containment",
+      "first_number_equal",
+      "first_number_conflict",
+      "postal_shared",
+      "postal_conflict",
+      "name_rank_inverse",
+      "address_rank_inverse",
+      "gram_rank_inverse",
+      "retrieval_channels"
+    ],
+    "posting_budget": 3000,
+    "model": "CatBoostClassifier",
+    "model_library_license": "Apache-2.0",
+    "seed": 42
+  },
+  "partitions": {
+    "train": {
+      "anchors": 4198,
+      "macro_f05": 0.9243975971715421,
+      "pair_precision": 0.9842235925362377,
+      "pair_recall": 0.8425310207719202,
+      "true_positives": 12290,
+      "false_positives": 197,
+      "false_negatives": 2297,
+      "singletons": 234,
+      "singleton_accuracy": 0.9444444444444444,
+      "candidate_pair_recall": 0.9268526770412011,
+      "candidate_oracle_macro_f05": 0.9688156265686543,
+      "mean_candidates": 46.17151024297284,
+      "empty_prediction_baseline_f05": 0.05574082896617437,
+      "countries": {
+        "India": {
+          "anchors": 1682,
+          "macro_f05": 0.8947772062381494,
+          "pair_precision": 0.9766610597140454,
+          "pair_recall": 0.7961947206033596,
+          "true_positives": 4645,
+          "false_positives": 111,
+          "false_negatives": 1189,
+          "singletons": 91,
+          "singleton_accuracy": 0.9340659340659341
+        },
+        "US": {
+          "anchors": 2516,
+          "macro_f05": 0.944199464242276,
+          "pair_precision": 0.9888759539516233,
+          "pair_recall": 0.8734148292014167,
+          "true_positives": 7645,
+          "false_positives": 86,
+          "false_negatives": 1108,
+          "singletons": 143,
+          "singleton_accuracy": 0.951048951048951
+        }
+      }
+    },
+    "tune": {
+      "anchors": 898,
+      "macro_f05": 0.8961689047731166,
+      "pair_precision": 0.9753086419753086,
+      "pair_recall": 0.8079258549057207,
+      "true_positives": 2528,
+      "false_positives": 64,
+      "false_negatives": 601,
+      "singletons": 49,
+      "singleton_accuracy": 0.8775510204081632,
+      "candidate_pair_recall": 0.9143496324704379,
+      "candidate_oracle_macro_f05": 0.9620384107380564,
+      "mean_candidates": 45.89643652561247,
+      "empty_prediction_baseline_f05": 0.05456570155902005,
+      "countries": {
+        "India": {
+          "anchors": 360,
+          "macro_f05": 0.8558103513461209,
+          "pair_precision": 0.9610655737704918,
+          "pair_recall": 0.7613636363636364,
+          "true_positives": 938,
+          "false_positives": 38,
+          "false_negatives": 294,
+          "singletons": 19,
+          "singleton_accuracy": 0.7894736842105263
+        },
+        "US": {
+          "anchors": 538,
+          "macro_f05": 0.9231746282558646,
+          "pair_precision": 0.9839108910891089,
+          "pair_recall": 0.838165524512388,
+          "true_positives": 1590,
+          "false_positives": 26,
+          "false_negatives": 307,
+          "singletons": 30,
+          "singleton_accuracy": 0.9333333333333333
+        }
+      }
+    },
+    "holdout": {
+      "anchors": 904,
+      "macro_f05": 0.9255490622573501,
+      "pair_precision": 0.9716703458425313,
+      "pair_recall": 0.8459320948110186,
+      "true_positives": 2641,
+      "false_positives": 77,
+      "false_negatives": 481,
+      "singletons": 53,
+      "singleton_accuracy": 0.9245283018867925,
+      "candidate_pair_recall": 0.9381806534272902,
+      "candidate_oracle_macro_f05": 0.9749923513383711,
+      "mean_candidates": 46.24004424778761,
+      "empty_prediction_baseline_f05": 0.0586283185840708,
+      "countries": {
+        "India": {
+          "anchors": 363,
+          "macro_f05": 0.88431062050626,
+          "pair_precision": 0.951195219123506,
+          "pair_recall": 0.7770545158665582,
+          "true_positives": 955,
+          "false_positives": 49,
+          "false_negatives": 274,
+          "singletons": 21,
+          "singleton_accuracy": 0.9523809523809523
+        },
+        "US": {
+          "anchors": 541,
+          "macro_f05": 0.9532192181827581,
+          "pair_precision": 0.9836639439906651,
+          "pair_recall": 0.8906497622820919,
+          "true_positives": 1686,
+          "false_positives": 28,
+          "false_negatives": 207,
+          "singletons": 32,
+          "singleton_accuracy": 0.90625
+        }
+      }
+    }
+  },
+  "candidate_pairs": 276844,
+  "best_iteration": 449,
+  "retrieval_and_features_seconds": 309.448,
+  "training_seconds": 4.645,
+  "total_seconds": 315.227,
+  "peak_process_memory_mb": 533.0,
+  "feature_importance": [
+    [
+      "name_core_ratio",
+      15.657475423897381
+    ],
+    [
+      "address_token_set",
+      13.927775328557312
+    ],
+    [
+      "address_token_containment",
+      9.672545835448341
+    ],
+    [
+      "name_partial",
+      7.83826199081168
+    ],
+    [
+      "first_number_conflict",
+      5.969599886036297
+    ],
+    [
+      "address_token_jaccard",
+      5.105108353634309
+    ],
+    [
+      "number_containment",
+      3.909170963497588
+    ],
+    [
+      "name_token_sort",
+      3.6279462741862445
+    ],
+    [
+      "name_rank_inverse",
+      3.4125002614491384
+    ],
+    [
+      "name_ratio",
+      3.3722370260122685
+    ],
+    [
+      "name_token_jaccard",
+      3.348119001364711
+    ],
+    [
+      "address_ratio",
+      3.0270432854386065
+    ],
+    [
+      "address_rank_inverse",
+      2.764294737195645
+    ],
+    [
+      "address_token_sort",
+      2.618209442698299
+    ],
+    [
+      "name_token_set",
+      2.5257209922789103
+    ],
+    [
+      "name_token_containment",
+      2.5220766342798555
+    ],
+    [
+      "name_length_ratio",
+      2.5046365557499835
+    ],
+    [
+      "address_partial",
+      1.904571295374077
+    ],
+    [
+      "number_jaccard",
+      1.7963456024806455
+    ],
+    [
+      "address_missing_right",
+      1.4474946290684847
+    ],
+    [
+      "latin_fraction_difference",
+      0.8974107500309787
+    ],
+    [
+      "gram_rank_inverse",
+      0.8921329935170943
+    ],
+    [
+      "retrieval_channels",
+      0.39837659178566803
+    ],
+    [
+      "first_number_equal",
+      0.34624557068035744
+    ],
+    [
+      "name_initials_equal",
+      0.2882440251663118
+    ],
+    [
+      "name_core_exact",
+      0.12127578149639191
+    ],
+    [
+      "postal_conflict",
+      0.08329361958965069
+    ],
+    [
+      "postal_shared",
+      0.016203270972039642
+    ],
+    [
+      "name_is_other_initials",
+      0.004423922425160589
+    ],
+    [
+      "address_exact_nonempty",
+      0.001259954876594978
+    ],
+    [
+      "address_missing_left",
+      0.0
+    ]
+  ],
+  "limitations": [
+    "The classifier is trained and evaluated on sampled Source 1 businesses, not every labeled business.",
+    "The partitions share an unlabeled search index, but no anchor or labeled positive target crosses partitions.",
+    "France has no labels, so this run does not establish French matching accuracy.",
+    "Country-restricted lexical retrieval can miss alternate-script names when addresses provide no shared text."
+  ]
+}

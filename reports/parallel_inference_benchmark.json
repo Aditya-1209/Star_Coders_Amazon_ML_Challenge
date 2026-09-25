@@ -1,0 +1,145 @@
+{
+  "sample": {
+    "rows": 768,
+    "population": 1732544,
+    "seed": 2026,
+    "countries": {
+      "India": 341,
+      "US": 288,
+      "France": 139
+    }
+  },
+  "serial_equivalence_holdout_rows": 904,
+  "test_output_equivalence_workers": [
+    4,
+    6,
+    8
+  ],
+  "runs": [
+    {
+      "status": "complete",
+      "updated_at": "2026-09-25T07:19:20.697675+00:00",
+      "pid": 63599,
+      "workers": 4,
+      "total_rows": 768,
+      "completed_rows": 768,
+      "completed_chunks": 24,
+      "candidate_pairs": 35352,
+      "matched_pairs": 2332,
+      "empty_matches": 53,
+      "resumed_rows": 0,
+      "elapsed_current_run_seconds": 13.436,
+      "rows_per_second": 57.158,
+      "estimated_remaining_seconds": 0.0,
+      "worker_peak_mib": {
+        "63602": 1077.375,
+        "63601": 1068.5,
+        "63603": 1057.28125,
+        "63604": 1074.046875
+      },
+      "output_files": {
+        "matching_results.tsv": {
+          "path": "/Users/adityapatil/Documents/ChatGPT/Amazon ML Challenge/artifacts/parallel_test_w4/matching_results.tsv",
+          "bytes": 40021,
+          "mtime_ns": 1790320760696580420,
+          "sha256": "07ed8f5a78dc02c7c0d20564215bc0d45065e7b9dfe6a8aa3cbaf79aae1673ee"
+        },
+        "candidate_pairs.tsv": {
+          "path": "/Users/adityapatil/Documents/ChatGPT/Amazon ML Challenge/artifacts/parallel_test_w4/candidate_pairs.tsv",
+          "bytes": 465559,
+          "mtime_ns": 1790320760697429752,
+          "sha256": "67d83e033cda180a08268e075868bc7f27eddc266a3c68d79a3e62a29f437534"
+        }
+      }
+    },
+    {
+      "status": "complete",
+      "updated_at": "2026-09-25T07:19:29.850198+00:00",
+      "pid": 63733,
+      "workers": 6,
+      "total_rows": 768,
+      "completed_rows": 768,
+      "completed_chunks": 24,
+      "candidate_pairs": 35352,
+      "matched_pairs": 2332,
+      "empty_matches": 53,
+      "resumed_rows": 0,
+      "elapsed_current_run_seconds": 9.09,
+      "rows_per_second": 84.488,
+      "estimated_remaining_seconds": 0.0,
+      "worker_peak_mib": {
+        "63735": 973.984375,
+        "63737": 1005.796875,
+        "63736": 1003.953125,
+        "63739": 983.1875,
+        "63738": 1006.09375,
+        "63740": 1002.515625
+      },
+      "output_files": {
+        "matching_results.tsv": {
+          "path": "/Users/adityapatil/Documents/ChatGPT/Amazon ML Challenge/artifacts/parallel_test_w6/matching_results.tsv",
+          "bytes": 40021,
+          "mtime_ns": 1790320769849162484,
+          "sha256": "07ed8f5a78dc02c7c0d20564215bc0d45065e7b9dfe6a8aa3cbaf79aae1673ee"
+        },
+        "candidate_pairs.tsv": {
+          "path": "/Users/adityapatil/Documents/ChatGPT/Amazon ML Challenge/artifacts/parallel_test_w6/candidate_pairs.tsv",
+          "bytes": 465559,
+          "mtime_ns": 1790320769850006401,
+          "sha256": "67d83e033cda180a08268e075868bc7f27eddc266a3c68d79a3e62a29f437534"
+        }
+      }
+    },
+    {
+      "status": "complete",
+      "updated_at": "2026-09-25T07:19:38.157309+00:00",
+      "pid": 63859,
+      "workers": 8,
+      "total_rows": 768,
+      "completed_rows": 768,
+      "completed_chunks": 24,
+      "candidate_pairs": 35352,
+      "matched_pairs": 2332,
+      "empty_matches": 53,
+      "resumed_rows": 0,
+      "elapsed_current_run_seconds": 8.253,
+      "rows_per_second": 93.057,
+      "estimated_remaining_seconds": 0.0,
+      "worker_peak_mib": {
+        "63867": 908.8125,
+        "63868": 940.21875,
+        "63861": 944.953125,
+        "63865": 944.328125,
+        "63862": 943.0,
+        "63863": 928.6875,
+        "63864": 945.234375,
+        "63866": 931.96875
+      },
+      "output_files": {
+        "matching_results.tsv": {
+          "path": "/Users/adityapatil/Documents/ChatGPT/Amazon ML Challenge/artifacts/parallel_test_w8/matching_results.tsv",
+          "bytes": 40021,
+          "mtime_ns": 1790320778156277792,
+          "sha256": "07ed8f5a78dc02c7c0d20564215bc0d45065e7b9dfe6a8aa3cbaf79aae1673ee"
+        },
+        "candidate_pairs.tsv": {
+          "path": "/Users/adityapatil/Documents/ChatGPT/Amazon ML Challenge/artifacts/parallel_test_w8/candidate_pairs.tsv",
+          "bytes": 465559,
+          "mtime_ns": 1790320778157035167,
+          "sha256": "67d83e033cda180a08268e075868bc7f27eddc266a3c68d79a3e62a29f437534"
+        }
+      }
+    }
+  ],
+  "chosen_workers": 8,
+  "full_chunk_size": 128,
+  "caveat": "Short sequential benchmarks; later runs benefit from warm OS caches. Full-run speed may vary with cache, thermal state, and country distribution. RSS includes shared read-only mapped pages.",
+  "sample_validation": {
+    "status": "passed",
+    "rows": 768,
+    "candidate_pairs": 35352,
+    "matched_pairs": 2332,
+    "valid_target_ids": 9969589,
+    "seconds": 19.747
+  }
+}

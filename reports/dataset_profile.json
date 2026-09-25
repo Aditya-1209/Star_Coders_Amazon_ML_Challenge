@@ -1,0 +1,251 @@
+{
+  "files": [
+    {
+      "file": "train/train_source1.tsv",
+      "split": "train",
+      "source": 1,
+      "rows": 2206821,
+      "bytes": 210069713,
+      "countries": {
+        "US": 1323633,
+        "India": 883188
+      },
+      "empty_fields": {
+        "entity_id": 0,
+        "business_name": 0,
+        "business_address": 0,
+        "country": 0
+      },
+      "wrong_source_prefix": 0
+    },
+    {
+      "file": "train/train_source2.tsv",
+      "split": "train",
+      "source": 2,
+      "rows": 5034616,
+      "bytes": 489301488,
+      "countries": {
+        "India": 2017799,
+        "US": 3016817
+      },
+      "empty_fields": {
+        "entity_id": 0,
+        "business_name": 0,
+        "business_address": 168967,
+        "country": 0
+      },
+      "wrong_source_prefix": 0
+    },
+    {
+      "file": "train/train_source3.tsv",
+      "split": "train",
+      "source": 3,
+      "rows": 5285603,
+      "bytes": 503705637,
+      "countries": {
+        "US": 3170056,
+        "India": 2115547
+      },
+      "empty_fields": {
+        "entity_id": 0,
+        "business_name": 0,
+        "business_address": 175916,
+        "country": 0
+      },
+      "wrong_source_prefix": 0
+    },
+    {
+      "file": "test/test_source1.tsv",
+      "split": "test",
+      "source": 1,
+      "rows": 1732544,
+      "bytes": 175022086,
+      "countries": {
+        "US": 663106,
+        "France": 259452,
+        "India": 809986
+      },
+      "empty_fields": {
+        "entity_id": 0,
+        "business_name": 0,
+        "business_address": 0,
+        "country": 0
+      },
+      "wrong_source_prefix": 0
+    },
+    {
+      "file": "test/test_source2.tsv",
+      "split": "test",
+      "source": 2,
+      "rows": 4887273,
+      "bytes": 509456422,
+      "countries": {
+        "India": 2312565,
+        "France": 703378,
+        "US": 1871330
+      },
+      "empty_fields": {
+        "entity_id": 0,
+        "business_name": 0,
+        "business_address": 129408,
+        "country": 0
+      },
+      "wrong_source_prefix": 0
+    },
+    {
+      "file": "test/test_source3.tsv",
+      "split": "test",
+      "source": 3,
+      "rows": 5082316,
+      "bytes": 506002772,
+      "countries": {
+        "India": 2405000,
+        "France": 731615,
+        "US": 1945701
+      },
+      "empty_fields": {
+        "entity_id": 0,
+        "business_name": 0,
+        "business_address": 136098,
+        "country": 0
+      },
+      "wrong_source_prefix": 0
+    }
+  ],
+  "ground_truth": {
+    "rows": 2206821,
+    "matches": 7638365,
+    "singleton_rows": 123247,
+    "singleton_fraction": 0.05584820880352326,
+    "mean_matches_per_source1": 3.4612526344456573,
+    "match_count_distribution": {
+      "0": 123247,
+      "1": 119157,
+      "2": 375212,
+      "3": 530841,
+      "4": 484115,
+      "5": 321957,
+      "6": 164868,
+      "7": 63968,
+      "8": 18680,
+      "9": 4205,
+      "10": 534,
+      "11": 37
+    },
+    "matches_by_source": {
+      "S2": 3693619,
+      "S3": 3944746
+    },
+    "rows_with_duplicate_target_ids": 0,
+    "invalid_id_prefixes": 0,
+    "row_count_equals_train_source1": true
+  },
+  "all_pairs_comparisons": {
+    "train": 22774876013799,
+    "test": 17272751604416
+  },
+  "sample": {
+    "seed": 42,
+    "source1_rows": 2000,
+    "matched_pairs": {
+      "pairs": 6971,
+      "same_country": 6971,
+      "exact_business_name": 339,
+      "normalized_exact_business_name": 1516,
+      "exact_business_address": 163,
+      "normalized_exact_business_address": 589
+    },
+    "examples": [
+      {
+        "source1": {
+          "entity_id": "S1-239474110",
+          "business_name": "Al Builders Private Limited",
+          "business_address": "Plot No. 12, Ring Road, Trimurty Nagar, Nagpur, Maharashtra",
+          "country": "India"
+        },
+        "match": {
+          "entity_id": "S2-853840289",
+          "business_name": "अल बिल्डर्स प्राइवेट लिमिटेड",
+          "business_address": "PLHT NO. 12, NAGPUR, Maharashtra",
+          "country": "India"
+        }
+      },
+      {
+        "source1": {
+          "entity_id": "S1-239474110",
+          "business_name": "Al Builders Private Limited",
+          "business_address": "Plot No. 12, Ring Road, Trimurty Nagar, Nagpur, Maharashtra",
+          "country": "India"
+        },
+        "match": {
+          "entity_id": "S3-16760339",
+          "business_name": "अल बिल्डर्स प्राइवेट लिमिटेड",
+          "business_address": "Door No 12, Ring Road, Trimurty Nagar, Nagpur, MH",
+          "country": "India"
+        }
+      },
+      {
+        "source1": {
+          "entity_id": "S1-239474110",
+          "business_name": "Al Builders Private Limited",
+          "business_address": "Plot No. 12, Ring Road, Trimurty Nagar, Nagpur, Maharashtra",
+          "country": "India"
+        },
+        "match": {
+          "entity_id": "S3-983111338",
+          "business_name": "AB",
+          "business_address": "Plot No. 12, Ring Road, Trimurty Nagar, Nagpur, Maharashtra",
+          "country": "India"
+        }
+      },
+      {
+        "source1": {
+          "entity_id": "S1-903176972",
+          "business_name": "RLC Academy Public Limited",
+          "business_address": "1075 A, Hal 2Nd Stage Indiranagar, Bangalore, Karnataka",
+          "country": "India"
+        },
+        "match": {
+          "entity_id": "S2-982903504",
+          "business_name": "Public RLC Academy Limited",
+          "business_address": "1075 A, HAL 2ND STAGE INDIRANAGAR, BANGALORE, BENGALURU, ಕರ್ನಾಟಕ",
+          "country": "India"
+        }
+      },
+      {
+        "source1": {
+          "entity_id": "S1-903176972",
+          "business_name": "RLC Academy Public Limited",
+          "business_address": "1075 A, Hal 2Nd Stage Indiranagar, Bangalore, Karnataka",
+          "country": "India"
+        },
+        "match": {
+          "entity_id": "S2-886328964",
+          "business_name": "RLC Academy Limited Service",
+          "business_address": "1075 A, HAL 2ND STAGE INDIRANAGAR, BANGALORE, Karnataka",
+          "country": "India"
+        }
+      },
+      {
+        "source1": {
+          "entity_id": "S1-903176972",
+          "business_name": "RLC Academy Public Limited",
+          "business_address": "1075 A, Hal 2Nd Stage Indiranagar, Bangalore, Karnataka",
+          "country": "India"
+        },
+        "match": {
+          "entity_id": "S3-544389637",
+          "business_name": "RLC Academy Public Ltd",
+          "business_address": "Door No 1075 A, Bangalore, KA",
+          "country": "India"
+        }
+      }
+    ]
+  },
+  "limitations": [
+    "Full ID uniqueness and full ground-truth referential integrity were not checked.",
+    "True-pair text similarity statistics use a seeded reservoir sample of Source 1 rows.",
+    "No model has been trained; no validation or test performance is claimed."
+  ],
+  "elapsed_seconds": 25.74
+}
