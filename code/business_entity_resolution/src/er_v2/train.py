@@ -80,10 +80,51 @@ def fold_expr() -> pl.Expr:
     return (pl.col("sidx").hash(seed=11) % N_FOLDS).cast(pl.Int8).alias("fold")
 
 
+# ---- test-density simulation ("ghost" businesses) ------------------------------
+# Test has ~5.75 Source 2/3 records per business vs 4.68 in train, i.e. about twice
+# as many ownerless records. Removing a fixed ~19% of training businesses turns
+# their records into ownerless ones, reproducing the test density. Their rows are
+# dropped, and the blocking-competition features (b_rel_t, t_rank, t_nc) are
+# recomputed without them. Test inference is unchanged.
+GHOST: dict = {"ids": None, "ctx": None}
+TEST_DENSITY_GHOST_FRAC = 0.19
+
+
+def ghost_setup(work: Path, frac: float, seed: int = 23) -> None:
+    if frac <= 0:
+        GHOST.update(ids=None, ctx=None)
+        return
+    s1 = pl.read_parquet(work / "norm" / "train_source1.parquet", columns=["idx"])
+    ids = s1.select(sidx=pl.col("idx").cast(pl.UInt32)).filter(
+        (pl.col("sidx").hash(seed=seed) % 10_000) < int(frac * 10_000))["sidx"]
+    ctx = (pl.scan_parquet(work / "cands_train.parquet").select("sidx", "tidx", "bscore")
+           .filter(~pl.col("sidx").is_in(ids))
+           .with_columns(
+               b_rel_t=(pl.col("bscore") / pl.col("bscore").max().over("tidx")).cast(pl.Float32),
+               t_rank=pl.col("bscore").rank("ordinal", descending=True).over("tidx").cast(pl.UInt16),
+               t_nc=pl.len().over("tidx").cast(pl.UInt32))
+           .select("sidx", "tidx", "b_rel_t", "t_rank", "t_nc").collect())
+    GHOST.update(ids=ids, ctx=ctx)
+    print(f"ghost regime: {len(ids):,} businesses removed ({frac:.0%})", flush=True)
+
+
+def ghostify(df: pl.DataFrame) -> pl.DataFrame:
+    """Drop ghost businesses and swap in competition features recomputed without them."""
+    if GHOST["ids"] is None or "sidx" not in df.columns:
+        return df
+    df = df.filter(~pl.col("sidx").is_in(GHOST["ids"]))
+    if "t_nc" not in df.columns:
+        return df
+    cols = df.columns
+    df = df.drop("b_rel_t", "t_rank", "t_nc").join(GHOST["ctx"], on=["sidx", "tidx"], how="left",
+                                                   maintain_order="left")
+    return df.select(cols)
+
+
 def load_feats(folder: Path, folds: list[int] | None = None, columns=None) -> pl.DataFrame:
     parts = []
     for p in feature_parts(folder):
-        df = pl.read_parquet(p, columns=columns)
+        df = ghostify(pl.read_parquet(p, columns=columns))
         if folds is not None:
             df = df.filter(fold_expr().is_in(folds))
         parts.append(df)
@@ -95,7 +136,7 @@ def load_train(folder: Path, folds: list[int], neg_frac: float = 1.0, exclude: p
     """Training rows of the given folds; optional negative subsampling (weight column ``w``)."""
     parts = []
     for p in feature_parts(folder):
-        df = pl.read_parquet(p).filter(fold_expr().is_in(folds))
+        df = ghostify(pl.read_parquet(p).filter(fold_expr().is_in(folds)))
         if exclude is not None:
             df = df.filter(~pl.col("sidx").is_in(exclude))
         if neg_frac < 1.0:
@@ -144,7 +185,7 @@ def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: list[xg
     """
     out = []
     for p in feature_parts(folder):
-        df = pl.read_parquet(p).with_columns(fold_expr())
+        df = ghostify(pl.read_parquet(p)).with_columns(fold_expr())
         pred = predict_ensemble(default, df, feats, batch_rows)
         for fold, model in models.items():
             mask = (df["fold"] == fold).to_numpy()
@@ -196,10 +237,15 @@ def main() -> None:
                     help="leave these countries out of all training (unseen-country proxy for France)")
     ap.add_argument("--extra-stage1-folds", action=argparse.BooleanOptionalAction, default=True,
                     help="use folds 8/9 as additional stage-1 training data")
+    ap.add_argument("--ghost-frac", type=float, default=0.0,
+                    help=f"simulate test record density by removing this share of train businesses "
+                         f"(test-like: {TEST_DENSITY_GHOST_FRAC})")
     ap.add_argument("--neg-frac", type=float, default=NEG_FRAC,
                     help="fraction of stage-1 negatives kept (reweighted); lowers training RAM")
     args = ap.parse_args()
     tag = "".join(f"_no{c}" for c in args.exclude_country)
+    if args.ghost_frac > 0:
+        tag += f"_ghost{int(round(args.ghost_frac * 100))}"
     work, mdir = Path(args.work), Path(args.model_dir)
     mdir.mkdir(parents=True, exist_ok=True)
     folder = work / "feats_train"
@@ -211,6 +257,7 @@ def main() -> None:
     if "postcode_conflict" not in f1 or "raw_name_ratio" not in f1:
         raise ValueError("Accuracy features are missing; regenerate features (run_features --overwrite)")
     excl = excluded_sidx(work, args.exclude_country)
+    ghost_setup(work, args.ghost_frac)
     # Fold 3 may tune early stopping, but fold 4 never influences fitting or selection.
     valid1 = validation_sample(load_train(folder, [3], exclude=excl), seed=1)
     rankers = []
@@ -247,7 +294,7 @@ def main() -> None:
     # stage-2 scores for every pruned pair of every fold (stage 3 builds on them)
     allp = []
     for p in feature_parts(folder):
-        part = pl.read_parquet(p).with_columns(fold_expr())
+        part = ghostify(pl.read_parquet(p)).with_columns(fold_expr())
         part = part.join(ctx_full, on=["sidx", "tidx"], how="inner").filter(pl.col("p1") >= PRUNE)
         allp.append(part.select("sidx", "tidx", "fold", "p1", "label").with_columns(
             p2=pl.Series(predict_frame(m2, part, f2, args.batch_rows))))
@@ -265,11 +312,15 @@ def main() -> None:
     s1, tg = load_split(work, "train")
     truth = ground_truth_pairs(Path(args.dataset), s1, tg).with_columns(fold_expr())
     anchors = s1.select(sidx=pl.col("idx").cast(pl.UInt32), country="country").with_columns(fold_expr())
+    if GHOST["ids"] is not None:  # ghosts are not businesses: their records are ownerless
+        anchors = anchors.filter(~pl.col("sidx").is_in(GHOST["ids"]))
+        truth = truth.filter(~pl.col("sidx").is_in(GHOST["ids"]))
     del s1, tg
 
     results = {}
     retrieval = (pl.scan_parquet(work / "cands_train.parquet").select("sidx", "tidx")
                  .with_columns(fold_expr()).filter(pl.col("fold").is_in([3, 4])).collect(engine="streaming"))
+    retrieval = ghostify(retrieval)
     for fold in (3, 4):
         retrieved = retrieval.filter(pl.col("fold") == fold)
         tr_ = truth.filter(pl.col("fold") == fold)
@@ -292,6 +343,7 @@ def main() -> None:
     results["fold4_by_country"] = per
     results["leaderboard_estimate"] = leaderboard_estimate(per)
     results["excluded_countries"] = args.exclude_country
+    results["ghost_frac"] = args.ghost_frac
     results["threshold"] = thr
     results["prune"] = PRUNE
     results["runtime"] = {"device": args.device, "threads": args.threads, "batch_rows": args.batch_rows}
