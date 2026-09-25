@@ -3,23 +3,28 @@
 #
 #   bash scripts/run_v2_pipeline.sh [steps...]
 #
-# Steps (default: all, in this order):
-#   translit prepare block feats train predict s3train s3test validate loco
-# Environment overrides: WORK (default work), MODEL (default work/model_r5),
-#   OUT (default output_r5), PY (default ./.venv312/Scripts/python).
-# "loco" is optional: it retrains stages 1-3 without India to measure how an
-# unseen country (our proxy for France) scores. It is not part of "all".
+# Default steps (normalized records in $WORK/norm are reused; add translit/prepare
+# only if normalization changed):
+#   block feats train predict s3train s3test validate
+# Optional steps:
+#   translit prepare         redo transliteration map + normalization
+#   loco                     retrain stages 1-3 without India (unseen-country proxy)
+#   stproxy                  self-training check on India (needs loco)
+#   selftrain stvalidate     France self-training on test -> $OUT_ST, then validate
+# Environment overrides: WORK (work), MODEL (work/model_r6), OUT (output_r6),
+#   OUT_ST (output_r6_selftrain), PY (./.venv312/Scripts/python).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH=code/business_entity_resolution/src PYTHONUTF8=1
 WORK=${WORK:-work}
-MODEL=${MODEL:-$WORK/model_r5}
-OUT=${OUT:-output_r5}
+MODEL=${MODEL:-$WORK/model_r6}
+OUT=${OUT:-output_r6}
+OUT_ST=${OUT_ST:-output_r6_selftrain}
 PY=${PY:-./.venv312/Scripts/python}
 LOG=$WORK/logs
 mkdir -p "$LOG" "$MODEL"
 STEPS=("$@")
-[ ${#STEPS[@]} -eq 0 ] && STEPS=(translit prepare block feats train predict s3train s3test validate)
+[ ${#STEPS[@]} -eq 0 ] && STEPS=(block feats train predict s3train s3test validate)
 
 run() {  # run <name> <command...>
   local name=$1; shift
@@ -45,6 +50,9 @@ for step in "${STEPS[@]}"; do
                 --test-dir student_resource/dataset/test --check-ids ;;
     loco)     run loco_train $PY -u -m er_v2.train --work "$WORK" --model-dir "$MODEL/loco_noIndia" --exclude-country India
               run loco_s3    $PY -u -m er_v2.stage3 --work "$WORK" --split train --model-dir "$MODEL/loco_noIndia" --exclude-country India ;;
+    stproxy)  run stproxy $PY -u -m er_v2.selftrain proxy --work "$WORK" --model-dir "$MODEL/loco_noIndia" --country India ;;
+    selftrain) run selftrain $PY -u -m er_v2.selftrain test --work "$WORK" --model-dir "$MODEL" --output "$OUT_ST" ;;
+    stvalidate) run stvalidate $PY student_resource/utils/validate_submission.py                 --matching "$OUT_ST/matching_results.tsv" --candidate "$OUT_ST/candidate_pairs.tsv"                 --test-dir student_resource/dataset/test --check-ids ;;
     *) echo "unknown step $step"; exit 2 ;;
   esac
 done

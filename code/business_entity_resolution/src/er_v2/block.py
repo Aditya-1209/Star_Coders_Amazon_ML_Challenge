@@ -6,8 +6,8 @@ Every record is exploded into blocking keys (country-scoped):
   w  alphabetic address token   q  address number + following token
 Keys whose document frequency among Source 2/3 records exceeds a per-type cap
 are ignored (they are uninformative and explode the join). Each surviving
-shared key contributes its IDF weight; the top-K targets per Source 1 record
-by summed weight form the candidate set.
+shared key contributes its IDF weight. Direct retrieval unions the combined
+top-K with separate name/address rankings; two-hop queries use combined top-K.
 """
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ import time
 import polars as pl
 
 CAPS = {"n": 2000, "c": 500, "p": 500, "a": 2000, "w": 2000, "q": 500}
+# Typo/transliteration rescue channel (from r5-recall-speed): 4-char prefix "u",
+# 4-char suffix "v", consonant skeleton "h" of name tokens with >= 5 letters.
+RESCUE_CAPS = {"u": 100, "v": 100, "h": 200}
 PAIR_SCHEMA = {"sidx": pl.UInt32, "tidx": pl.UInt32, "bscore": pl.Float32,
                "nkeys": pl.UInt32, "brank": pl.UInt32}
 
@@ -58,6 +61,30 @@ def make_keys(df: pl.DataFrame) -> pl.DataFrame:
     return keys
 
 
+def make_rescue_keys(df: pl.DataFrame) -> pl.DataFrame:
+    """Small, capped typo-tolerant name-token keys (country-scoped like all keys)."""
+    base = (df.select("idx", "country", s=pl.col("core_n").str.split(" "))
+            .explode("s").filter(pl.col("s").str.len_chars() >= 5))
+    parts = [
+        base.select("idx", "country", kind=pl.lit("u"), s=pl.col("s").str.slice(0, 4)),
+        base.select("idx", "country", kind=pl.lit("v"), s=pl.col("s").str.slice(-4)),
+        base.select("idx", "country", kind=pl.lit("h"), s=pl.col("s").str.replace_all("[aeiou]", ""))
+        .filter(pl.col("s").str.len_chars() >= 4),
+    ]
+    return (pl.concat(parts)
+            .with_columns(key=(pl.col("kind") + "|" + pl.col("country") + "|" + pl.col("s")).hash(seed=7))
+            .select(pl.col("idx").cast(pl.UInt32), "kind", "key").unique(["idx", "key"]))
+
+
+def merge_candidates(base: pl.DataFrame, rescue: pl.DataFrame, top_k: int) -> pl.DataFrame:
+    """Keep every base candidate; append unseen rescue pairs flagged rescue=1."""
+    added = rescue.join(base.select("sidx", "tidx"), on=["sidx", "tidx"], how="anti")
+    return pl.concat([
+        base.with_columns(rescue=pl.lit(0, pl.Int8)),
+        added.with_columns(rescue=pl.lit(1, pl.Int8), brank=pl.col("brank") + top_k),
+    ]).sort("sidx", "brank", "tidx")
+
+
 def build_target_index(tkeys: pl.DataFrame, n_targets: int, caps=CAPS) -> pl.DataFrame:
     if n_targets < 1:
         raise ValueError("The target corpus must contain at least one record")
@@ -65,15 +92,26 @@ def build_target_index(tkeys: pl.DataFrame, n_targets: int, caps=CAPS) -> pl.Dat
     cap = pl.col("kind").replace_strict(caps, return_dtype=pl.UInt32)
     df = df.filter(pl.col("df") <= cap)
     df = df.with_columns(w=(math.log(n_targets) - pl.col("df").cast(pl.Float64).log()).cast(pl.Float32))
-    idx = tkeys.join(df.select("key", "w"), on="key", how="inner").select("key", "idx", "w")
+    idx = tkeys.join(df.select("key", "w"), on="key", how="inner").select("key", "idx", "w", "kind")
     return idx.sort("key")
 
 
 def generate(skeys: pl.DataFrame, tindex: pl.DataFrame, top_k: int = 50,
-             chunk: int = 100_000, verbose: bool = True) -> pl.DataFrame:
-    """Return (sidx, tidx, bscore, nkeys, brank) for the top-K targets per source1."""
+             chunk: int = 100_000, verbose: bool = True,
+             name_k: int = 0, address_k: int = 0) -> pl.DataFrame:
+    """Union the combined top-K with optional name/address-only top-K lists.
+
+    Separate lists rescue name matches crowded out by address collisions and
+    address matches whose names have severe OCR/transliteration noise. The
+    original combined top-K is always retained. Graph expansion uses no extras.
+    """
     if top_k < 1 or chunk < 1:
         raise ValueError("top_k and chunk must be positive")
+    if name_k < 0 or address_k < 0:
+        raise ValueError("channel candidate limits cannot be negative")
+    diverse = bool(name_k or address_k)
+    if diverse and "kind" not in tindex.columns:
+        raise ValueError("Channel retrieval requires a target index with key kinds")
     keyset = tindex.select("key", "w").unique("key")
     sk = skeys.join(keyset, on="key", how="inner").select("idx", "key")
     ids = sk["idx"].unique().sort()
@@ -83,12 +121,27 @@ def generate(skeys: pl.DataFrame, tindex: pl.DataFrame, top_k: int = 50,
         lo, hi = ids[i], ids[min(i + chunk, len(ids)) - 1]
         part = sk.filter(pl.col("idx").is_between(lo, hi))
         j = part.join(tindex, on="key", how="inner", suffix="_t")
-        g = j.group_by("idx", "idx_t").agg(bscore=pl.col("w").sum(), nkeys=pl.len())
+        expressions = [pl.col("w").sum().alias("bscore"), pl.len().alias("nkeys")]
+        if diverse:
+            expressions.extend([
+                pl.col("w").filter(pl.col("kind").is_in(["n", "c", "p"])).sum().alias("name_score"),
+                pl.col("w").filter(pl.col("kind").is_in(["a", "w", "q"])).sum().alias("address_score"),
+            ])
+        g = j.group_by("idx", "idx_t").agg(expressions)
         # Hash-group iteration order is not a stable tie breaker.
         g = g.sort(["idx", "bscore", "idx_t"], descending=[False, True, False]).with_columns(
             brank=pl.int_range(1, pl.len() + 1).over("idx").cast(pl.UInt32)
-        ).filter(pl.col("brank") <= top_k)
-        out.append(g.rename({"idx": "sidx", "idx_t": "tidx"}))
+        )
+        keep = pl.col("brank") <= top_k
+        # Start each ordinal ranking in target-ID order for reproducible ties.
+        for channel, limit in (("name", name_k), ("address", address_k)):
+            if limit:
+                col = channel + "_score"
+                g = g.sort("idx", "idx_t").with_columns(
+                    pl.col(col).rank("ordinal", descending=True).over("idx").alias(channel + "_rank"))
+                keep = keep | ((pl.col(col) > 0) & (pl.col(channel + "_rank") <= limit))
+        g = g.filter(keep).rename({"idx": "sidx", "idx_t": "tidx"}).select(list(PAIR_SCHEMA))
+        out.append(g.cast(PAIR_SCHEMA))
         if verbose:
             print(f"  block {i + chunk:,}/{len(ids):,} joined={len(j):,} "
                   f"elapsed={time.time() - t0:.0f}s", flush=True)

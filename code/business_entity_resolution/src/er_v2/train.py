@@ -4,9 +4,11 @@ Stage 1 scores each pair from its own features. Stage 2 adds context from the
 stage-1 scores: how the pair ranks among its Source 1 record's candidates and
 among all Source 1 records competing for the same Source 2/3 target (every
 target belongs to at most one business). Folds are assigned by Source 1 id.
-  folds 0+8 / 1+9 : two stage-1 models (each predicts the other pair + everything else);
-                    negatives subsampled to NEG_FRAC with weight 1/NEG_FRAC
-  folds 2/5 : stage-2 training      fold 3 : threshold tuning
+  folds 0+8 / 1+9 : complementary stage-1 models (negatives subsampled to NEG_FRAC,
+                    weight 1/NEG_FRAC); each scores the other group, both average elsewhere
+  Stage 2 trains, builds context and predicts on stage-1 survivors only
+  (p1 >= PRUNE): exactly the candidate set it scores at inference.
+  folds 2/5 : stage-2 training      fold 3 : early stopping and threshold tuning
   fold  4   : untouched holdout for the reported score
 --exclude-country C drops country C from every training set (not from evaluation):
 the "unseen country" score for C is the proxy for France, which has no labels.
@@ -24,12 +26,13 @@ import polars as pl
 
 from .features import feature_names
 from .metrics import by_country, leaderboard_estimate, macro_f05
-from .decision import best_per_target
+from .decision import best_per_target, tune_threshold
 from .runtime import BATCH_ROWS, DEFAULT_THREADS, feature_parts, positive_int
 
 N_FOLDS = 10
-STAGE1_FOLDS = ([0, 8], [1, 9])
+STAGE1_GROUPS = ((0, 8), (1, 9))
 NEG_FRAC = 0.5
+FEATURE_VERSION = "r6"
 PRUNE = 0.001  # stage-1 floor that defines the final candidate set (see predict.py)
 PARAMS = dict(objective="binary:logistic", eval_metric="logloss", tree_method="hist",
               device="cuda", eta=0.08, max_depth=10, min_child_weight=5, subsample=0.8,
@@ -54,6 +57,17 @@ def predict_frame(model: xgb.Booster, df: pl.DataFrame, feats: list[str], batch_
         batch = df.slice(start, batch_rows)
         output[start:start + len(batch)] = predict(model, X(batch, feats))
     return output
+
+
+def predict_ensemble(models: list[xgb.Booster], df: pl.DataFrame, feats: list[str],
+                     batch_rows: int = BATCH_ROWS) -> np.ndarray:
+    """Average both complementary rankers for rows unseen by either model."""
+    if not models:
+        raise ValueError("At least one stage-1 model is required")
+    values = predict_frame(models[0], df, feats, batch_rows)
+    for model in models[1:]:
+        values += predict_frame(model, df, feats, batch_rows)
+    return values / len(models)
 
 
 def validation_sample(df: pl.DataFrame, seed: int, limit: int = 2_000_000) -> pl.DataFrame:
@@ -121,18 +135,23 @@ def fit(df: pl.DataFrame, feats: list[str], valid: pl.DataFrame | None, rounds: 
     return xgb.train(PARAMS if params is None else params, dtrain, rounds, evals=evals, verbose_eval=100, **kw)
 
 
-def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: xgb.Booster, feats,
-                  batch_rows: int = BATCH_ROWS) -> pl.DataFrame:
-    """Out-of-fold stage-1 probability for every pair in the folder."""
+def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: list[xgb.Booster], feats,
+                  batch_rows: int = BATCH_ROWS, floor: float = 0.0) -> pl.DataFrame:
+    """Use complementary models on their training groups, ensemble elsewhere.
+
+    Only pairs with p1 >= floor are kept (stage 2 never sees the rest).
+    Fold 3 influences early stopping, so only fold 4 is an untouched holdout.
+    """
     out = []
     for p in feature_parts(folder):
         df = pl.read_parquet(p).with_columns(fold_expr())
-        pred = predict_frame(default, df, feats, batch_rows)
+        pred = predict_ensemble(default, df, feats, batch_rows)
         for fold, model in models.items():
             mask = (df["fold"] == fold).to_numpy()
             if mask.any():
                 pred[mask] = predict_frame(model, df.filter(pl.col("fold") == fold), feats, batch_rows)
-        out.append(df.select("sidx", "tidx").with_columns(p1=pl.Series(pred.astype(np.float32))))
+        out.append(df.select("sidx", "tidx").with_columns(p1=pl.Series(pred.astype(np.float32)))
+                   .filter(pl.col("p1") >= floor))
     return pl.concat(out)
 
 
@@ -175,6 +194,10 @@ def main() -> None:
     ap.add_argument("--rounds", type=positive_int, default=1500)
     ap.add_argument("--exclude-country", nargs="*", default=[],
                     help="leave these countries out of all training (unseen-country proxy for France)")
+    ap.add_argument("--extra-stage1-folds", action=argparse.BooleanOptionalAction, default=True,
+                    help="use folds 8/9 as additional stage-1 training data")
+    ap.add_argument("--neg-frac", type=float, default=NEG_FRAC,
+                    help="fraction of stage-1 negatives kept (reweighted); lowers training RAM")
     args = ap.parse_args()
     tag = "".join(f"_no{c}" for c in args.exclude_country)
     work, mdir = Path(args.work), Path(args.model_dir)
@@ -185,30 +208,37 @@ def main() -> None:
 
     sample = pl.read_parquet(feature_parts(folder)[0], n_rows=1)
     f1 = feature_names(sample)
+    if "postcode_conflict" not in f1 or "raw_name_ratio" not in f1:
+        raise ValueError("Accuracy features are missing; regenerate features (run_features --overwrite)")
     excl = excluded_sidx(work, args.exclude_country)
-    fa, fb = STAGE1_FOLDS
-    a = load_train(folder, fa, NEG_FRAC, excl)
-    b = load_train(folder, fb, NEG_FRAC, excl)
-    print(f"stage1 data {len(a):,} + {len(b):,} pairs (negatives x{NEG_FRAC}), {time.time() - t:.0f}s", flush=True)
-    m0 = fit(a, f1, validation_sample(b, seed=1), args.rounds, params)
-    first_rounds = m0.best_iteration + 1 if m0.best_iteration is not None else args.rounds
-    m1 = fit(b, f1, validation_sample(a, seed=1), first_rounds, params)
-    del a, b
+    # Fold 3 may tune early stopping, but fold 4 never influences fitting or selection.
+    valid1 = validation_sample(load_train(folder, [3], exclude=excl), seed=1)
+    rankers = []
+    groups = STAGE1_GROUPS if args.extra_stage1_folds else ((0,), (1,))
+    for group in groups:
+        base = load_train(folder, list(group), args.neg_frac, excl)
+        print(f"stage1 folds {group}: {len(base):,} pairs (negatives x{args.neg_frac})", flush=True)
+        rankers.append(fit(base, f1, valid1, args.rounds, params))
+        del base
+    del valid1
+    m0, m1 = rankers
     m0.save_model(str(mdir / "stage1.json"))
-    print(f"stage1 trained ({m0.best_iteration} it), {time.time() - t:.0f}s", flush=True)
+    m1.save_model(str(mdir / "stage1_b.json"))
+    print(f"stage1 ensemble trained, {time.time() - t:.0f}s", flush=True)
 
-    oof = {**{f: m1 for f in fa}, **{f: m0 for f in fb}}
-    scores = stage1_scores(folder, oof, m0, f1, args.batch_rows)
+    held_out = {fold: m1 for fold in groups[0]}
+    held_out.update({fold: m0 for fold in groups[1]})
+    scores = stage1_scores(folder, held_out, rankers, f1, args.batch_rows, floor=PRUNE)
     ctx = context_features(scores)
     del scores
     print(f"stage1 scored + context, {time.time() - t:.0f}s", flush=True)
 
     ctx_cols = [c for c in ctx.columns if c not in ("sidx", "tidx")]
     f2 = f1 + ctx_cols
-    ctx_full = ctx.filter(pl.col("p1") >= PRUNE)
-    ctx = ctx.filter(fold_expr().is_in([2, 3, 4, 5]))
-    tr = load_train(folder, [2, 5], exclude=excl).join(ctx, on=["sidx", "tidx"], how="left")
-    va = validation_sample(load_feats(folder, [3]), seed=2).join(ctx, on=["sidx", "tidx"], how="left")
+    ctx_full = ctx
+    ctx = ctx.filter(fold_expr().is_in([2, 3, 5]))
+    tr = load_train(folder, [2, 5], exclude=excl).join(ctx, on=["sidx", "tidx"], how="inner")
+    va = validation_sample(load_train(folder, [3], exclude=excl).join(ctx, on=["sidx", "tidx"], how="inner"), seed=2)
     m2 = fit(tr, f2, va, args.rounds, params)
     del tr, va
     m2.save_model(str(mdir / "stage2.json"))
@@ -223,9 +253,10 @@ def main() -> None:
             p2=pl.Series(predict_frame(m2, part, f2, args.batch_rows))))
     allp = pl.concat(allp)
     allp.write_parquet(work / f"stage2_train{tag}.parquet")
-    del ctx_full
+    del ctx_full, part, rankers, held_out
     ev = allp.filter(pl.col("fold").is_in([3, 4]))
     del ctx
+    del allp
     ev.write_parquet(work / f"eval_preds{tag}.parquet")
 
     # truth + anchors for folds 3/4: all source1 records, incl. singletons / uncovered
@@ -234,17 +265,20 @@ def main() -> None:
     s1, tg = load_split(work, "train")
     truth = ground_truth_pairs(Path(args.dataset), s1, tg).with_columns(fold_expr())
     anchors = s1.select(sidx=pl.col("idx").cast(pl.UInt32), country="country").with_columns(fold_expr())
+    del s1, tg
 
     results = {}
-    best = (0, 0.5)
+    retrieval = (pl.scan_parquet(work / "cands_train.parquet").select("sidx", "tidx")
+                 .with_columns(fold_expr()).filter(pl.col("fold").is_in([3, 4])).collect(engine="streaming"))
+    for fold in (3, 4):
+        retrieved = retrieval.filter(pl.col("fold") == fold)
+        tr_ = truth.filter(pl.col("fold") == fold)
+        a = anchors.filter(pl.col("fold") == fold)["sidx"]
+        results[f"fold{fold}_retrieval_oracle"] = macro_f05(retrieved.join(tr_, on=["sidx", "tidx"]), tr_, a)
+    del retrieval, retrieved
     # tune only on countries seen in training, so an excluded country stays truly unseen
     tune_anchors = anchors.filter((pl.col("fold") == 3) & ~pl.col("country").is_in(args.exclude_country))["sidx"]
-    for thr in np.arange(0.2, 0.95, 0.025):
-        r = macro_f05(decide(ev.filter(pl.col("fold") == 3), thr), truth.filter(pl.col("fold") == 3),
-                      tune_anchors)
-        if r["macro_f05"] > best[0]:
-            best = (r["macro_f05"], float(thr))
-    thr = best[1]
+    _, thr = tune_threshold(ev.filter(pl.col("fold") == 3), truth.filter(pl.col("fold") == 3), tune_anchors)
     for fold in (3, 4):
         e = ev.filter(pl.col("fold") == fold)
         a = anchors.filter(pl.col("fold") == fold)["sidx"]
@@ -261,16 +295,21 @@ def main() -> None:
     results["threshold"] = thr
     results["prune"] = PRUNE
     results["runtime"] = {"device": args.device, "threads": args.threads, "batch_rows": args.batch_rows}
-    results["stage1_training_folds"] = list(STAGE1_FOLDS)
-    results["stage1_neg_frac"] = NEG_FRAC
+    results["stage1_neg_frac"] = args.neg_frac
     results["stage2_training_folds"] = [2, 5]
     results["stage3_eligible_folds"] = [3, 4, 6, 7]
+    results["feature_version"] = FEATURE_VERSION
+    results["stage1_models"] = ["stage1.json", "stage1_b.json"]
+    results["stage1_training_groups"] = groups
+    results["early_stopping_fold"] = 3
+    results["threshold_method"] = "exact_exclusive_macro_f05"
     for fold in (3, 4):
         results[f"fold{fold}_mean_candidates"] = len(ev.filter(pl.col("fold") == fold)) / len(
             anchors.filter(pl.col("fold") == fold))
     results["stage1_features"] = f1
     results["stage2_features"] = f2
-    results["best_iterations"] = {"stage1": m0.best_iteration, "stage2": m2.best_iteration}
+    results["best_iterations"] = {"stage1": m0.best_iteration, "stage1_b": m1.best_iteration,
+                                  "stage2": m2.best_iteration}
     (mdir / "metrics.json").write_text(json.dumps(results, indent=2))
     for k, v in results.items():
         if isinstance(v, dict) and "macro_f05" in v:

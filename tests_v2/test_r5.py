@@ -35,7 +35,8 @@ class R5Tests(unittest.TestCase):
         idf = token_idf(self.tg)
         cands = pl.DataFrame({"sidx": sidx, "tidx": tidx}, schema={"sidx": pl.UInt32, "tidx": pl.UInt32})
         cands = cands.with_columns(*[pl.lit(1.0, pl.Float32).alias(c) for c in (
-            "bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc", "s_nc")])
+            "bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc", "s_nc")],
+            rescue=pl.lit(0, pl.Int8))
         return compute(pair_frame(cands, left, right, 10), workers=1, idf=idf)
 
     def test_rare_tokens_outweigh_generic_ones(self):
@@ -50,7 +51,7 @@ class R5Tests(unittest.TestCase):
     def test_genericness_counts_are_per_split_and_country(self):
         f = self.features([0], [0]).row(0, named=True)
         self.assertGreater(f["name_cnt_l"], 0.0)   # two Source 1 rows share "tir club"
-        self.assertGreater(f["name_in_tg_l"], 0.0)  # and one target carries it
+        self.assertGreater(f["name_frequency_l"], 0.0)  # and one target carries it
 
     def test_hop_rule_keeps_direct_supported_and_blank_address_name_matches(self):
         df = pl.DataFrame({

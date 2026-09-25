@@ -13,6 +13,8 @@ from rapidfuzz import fuzz, process
 from rapidfuzz.distance import JaroWinkler
 
 STRING_FEATURES = [
+    ("raw_name", "raw_name_ratio", fuzz.ratio),
+    ("raw_name", "raw_name_tset", fuzz.token_set_ratio),
     ("core", "core_ratio", fuzz.ratio),
     ("core", "core_tsort", fuzz.token_sort_ratio),
     ("core", "core_tset", fuzz.token_set_ratio),
@@ -33,13 +35,23 @@ def _record_cols(df: pl.DataFrame) -> pl.DataFrame:
     """Per-record derived columns used by the pair features."""
     return df.select(
         "idx",
-        "country",
+        country=pl.col("country"),
+        raw_name=pl.col("business_name").fill_null("").str.to_lowercase()
+        .str.replace_all(r"[^\p{L}\p{M}\p{N}]+", " ").str.strip_chars(),
         name=pl.col("name_n"),
         core=pl.col("core_n"),
         cc=pl.col("core_n").str.replace_all(" ", ""),
         addr=pl.col("addr_n"),
-        ntok=pl.col("core_n").str.split(" ").list.eval(pl.element().filter(pl.element() != "")),
-        atok=pl.col("addr_n").str.split(" ").list.eval(pl.element().filter(pl.element() != "")),
+        ntok=pl.col("core_n").str.split(" ").list.eval(pl.element().filter(pl.element() != "")).list.unique(maintain_order=True),
+        atok=pl.col("addr_n").str.split(" ").list.eval(pl.element().filter(pl.element() != "")).list.unique(maintain_order=True),
+        name_num=pl.col("business_name").fill_null("").str.extract_all(r"\d+").list.unique(),
+        addr_num=pl.col("addr_n").str.extract_all(r"\d+").list.unique(),
+        house=pl.col("addr_n").str.extract(r"\b(\d{1,4}[a-z]?)\b", 1).fill_null(""),
+        # Read raw addresses: normalization strips leading zeroes from ZIPs.
+        # These are fallible features, never hard matching constraints.
+        postcode=pl.when(pl.col("country") == "India")
+        .then(pl.col("business_address").str.extract_all(r"\b\d{6}\b").list.last())
+        .otherwise(pl.col("business_address").str.extract_all(r"\b\d{5}\b").list.last()).fill_null(""),
         nonlatin=(~pl.col("business_name").str.contains(r"^[\x00-\x7FÀ-ɏ]*$")).cast(pl.Int8),
     ).with_columns(
         dtok=pl.col("atok").list.eval(pl.element().filter(pl.element().str.contains(r"\d"))),
@@ -61,14 +73,19 @@ def record_frames(s1: pl.DataFrame, tg: pl.DataFrame) -> tuple[pl.DataFrame, pl.
     """
     left = _record_cols(s1)
     right = _record_cols(tg)
+    # A common chain name is weaker evidence than a unique business name.
+    # Counts use only unlabelled records in this split, never ground truth.
+    counts = right.group_by("country", "core").agg(name_frequency=pl.len().cast(pl.UInt32))
+    left = left.join(counts, on=["country", "core"], how="left").with_columns(
+        pl.col("name_frequency").fill_null(0))
+    right = right.join(counts, on=["country", "core"], how="left")
+    # Same-side genericness (r5): shared S1 names, shared addresses, and how many
+    # Source 1 businesses carry a target's name.
     left = left.with_columns(_count_over(left, "core", "name_cnt"), _count_over(left, "addr", "addr_cnt"))
-    right = right.with_columns(_count_over(right, "core", "name_cnt"), _count_over(right, "addr", "addr_cnt"))
-    in_tg = right.filter(pl.col("core") != "").group_by("country", "core").agg(name_in_other=pl.len())
-    in_s1 = left.filter(pl.col("core") != "").group_by("country", "core").agg(name_in_other=pl.len())
-    left = left.join(in_tg, on=["country", "core"], how="left", maintain_order="left")
-    right = right.join(in_s1, on=["country", "core"], how="left", maintain_order="left")
-    left = left.with_columns(pl.col("name_in_other").fill_null(0).cast(pl.UInt32))
-    right = right.with_columns(pl.col("name_in_other").fill_null(0).cast(pl.UInt32))
+    right = right.with_columns(_count_over(right, "addr", "addr_cnt"))
+    in_s1 = left.filter(pl.col("core") != "").group_by("country", "core").agg(name_in_s1=pl.len())
+    right = right.join(in_s1, on=["country", "core"], how="left").with_columns(
+        pl.col("name_in_s1").fill_null(0).cast(pl.UInt32))
     left = left.rename({c: c + "_l" for c in left.columns if c != "idx"})
     right = right.rename({c: c + "_r" for c in right.columns if c != "idx"})
     return left, right
@@ -151,12 +168,28 @@ def compute(pairs: pl.DataFrame, workers: int = -1, idf: dict[str, pl.DataFrame]
     for field, name, scorer in STRING_FEATURES:
         a = pairs[field + "_l"].to_list()
         b = pairs[field + "_r"].to_list()
-        feats[name] = process.cpdist(a, b, scorer=scorer, workers=workers, dtype=np.float32)
+        values = process.cpdist(a, b, scorer=scorer, workers=workers, dtype=np.float32)
+        present = ((pairs[field + "_l"].fill_null("") != "")
+                   & (pairs[field + "_r"].fill_null("") != "")).to_numpy()
+        values[~present] = 0.0
+        feats[name] = values
     f = pl.DataFrame(feats)
     tok = pairs.select(
         *_jacc("ntok_l", "ntok_r", "ntok"),
         *_jacc("atok_l", "atok_r", "atok"),
         *_jacc("dtok_l", "dtok_r", "dtok"),
+        *_jacc("name_num_l", "name_num_r", "name_num"),
+        *_jacc("addr_num_l", "addr_num_r", "addr_num"),
+        name_num_conflict=_number_conflict("name_num"),
+        house_equal=_both_present("house") & (pl.col("house_l") == pl.col("house_r")),
+        house_conflict=_both_present("house") & (pl.col("house_l") != pl.col("house_r")),
+        postcode_equal=_both_present("postcode") & (pl.col("postcode_l") == pl.col("postcode_r")),
+        postcode_conflict=_both_present("postcode") & (pl.col("postcode_l") != pl.col("postcode_r")),
+        postcode_both_present=_both_present("postcode"),
+        addr_both_present=_both_present("addr"),
+        raw_name_equal=_both_present("raw_name") & (pl.col("raw_name_l") == pl.col("raw_name_r")),
+        name_frequency_l=pl.col("name_frequency_l").cast(pl.Float32).log1p(),
+        name_frequency_r=pl.col("name_frequency_r").cast(pl.Float32).log1p(),
         first_num_eq=(pl.col("dtok_l").list.first() == pl.col("dtok_r").list.first()).fill_null(False).cast(pl.Int8),
         num_conflict=((pl.col("dtok_l").list.len() > 0) & (pl.col("dtok_r").list.len() > 0)
                       & (pl.col("dtok_l").list.set_intersection(pl.col("dtok_r")).list.len() == 0)).cast(pl.Int8),
@@ -176,18 +209,28 @@ def compute(pairs: pl.DataFrame, workers: int = -1, idf: dict[str, pl.DataFrame]
         t_rank=pl.col("t_rank"),
         t_nc=pl.col("t_nc"),
         s_nc=pl.col("s_nc"),
+        rescue=(pl.col("rescue") if "rescue" in pairs.columns else pl.lit(None, pl.Int8)),
         name_cnt_l=pl.col("name_cnt_l").log1p().cast(pl.Float32),
-        name_cnt_r=pl.col("name_cnt_r").log1p().cast(pl.Float32),
         addr_cnt_l=pl.col("addr_cnt_l").log1p().cast(pl.Float32),
         addr_cnt_r=pl.col("addr_cnt_r").log1p().cast(pl.Float32),
-        name_in_tg_l=pl.col("name_in_other_l").log1p().cast(pl.Float32),
-        name_in_s1_r=pl.col("name_in_other_r").log1p().cast(pl.Float32),
+        name_in_s1_r=pl.col("name_in_s1_r").log1p().cast(pl.Float32),
     )
     frames = [pairs.select("sidx", "tidx"), f, tok]
     if idf is not None:
         frames.append(_weighted_overlap(pairs, "ntok_l", "ntok_r", idf["n"], "wn"))
         frames.append(_weighted_overlap(pairs, "atok_l", "atok_r", idf["a"], "wa"))
     return pl.concat(frames, how="horizontal")
+
+
+def _both_present(field: str) -> pl.Expr:
+    return ((pl.col(field + "_l").fill_null("") != "")
+            & (pl.col(field + "_r").fill_null("") != ""))
+
+
+def _number_conflict(field: str) -> pl.Expr:
+    a, b = pl.col(field + "_l"), pl.col(field + "_r")
+    return ((a.list.len() > 0) & (b.list.len() > 0)
+            & (a.list.set_intersection(b).list.len() == 0))
 
 
 def add_block_context(cands: pl.DataFrame) -> pl.DataFrame:
