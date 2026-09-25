@@ -98,7 +98,8 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
 
 
 def feature_cols(df: pl.DataFrame) -> list[str]:
-    return [c for c in df.columns if c not in ("sidx", "tidx", "label", "fold")]
+    from .features import SPLIT_DEPENDENT
+    return [c for c in df.columns if c not in ("sidx", "tidx", "label", "fold") and c not in SPLIT_DEPENDENT]
 
 
 def main() -> None:

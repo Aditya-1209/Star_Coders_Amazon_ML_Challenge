@@ -244,8 +244,18 @@ def add_block_context(cands: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-FEATURE_COLS = None  # filled lazily: every column except the pair ids
+# Features whose scale depends on how large the split is (absolute counts, and
+# IDF values log(N/df) with N = records per country). Train and test differ in
+# size (e.g. US: 1.32M vs 0.66M businesses, 6.2M vs 3.8M records), so these
+# made train and test pairs separable (adversarial AUC 0.93-0.97 vs ~0.72
+# without them) and cost ~0.8 leaderboard points despite a better holdout.
+# They are still computed but never used by any model.
+SPLIT_DEPENDENT = {
+    "name_frequency_l", "name_frequency_r", "name_cnt_l", "addr_cnt_l", "addr_cnt_r", "name_in_s1_r",
+    "wn_jacc", "wn_cont_l", "wn_cont_r", "wn_unmatched_l", "wn_unmatched_r",
+    "wa_jacc", "wa_cont_l", "wa_cont_r", "wa_unmatched_l", "wa_unmatched_r",
+}
 
 
 def feature_names(df: pl.DataFrame) -> list[str]:
-    return [c for c in df.columns if c not in ("sidx", "tidx", "label")]
+    return [c for c in df.columns if c not in ("sidx", "tidx", "label") and c not in SPLIT_DEPENDENT]

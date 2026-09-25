@@ -32,7 +32,7 @@ from .runtime import BATCH_ROWS, DEFAULT_THREADS, feature_parts, positive_int
 N_FOLDS = 10
 STAGE1_GROUPS = ((0, 8), (1, 9))
 NEG_FRAC = 0.5
-FEATURE_VERSION = "r6"
+FEATURE_VERSION = "r6.1"
 PRUNE = 0.001  # stage-1 floor that defines the final candidate set (see predict.py)
 PARAMS = dict(objective="binary:logistic", eval_metric="logloss", tree_method="hist",
               device="cuda", eta=0.08, max_depth=10, min_child_weight=5, subsample=0.8,
