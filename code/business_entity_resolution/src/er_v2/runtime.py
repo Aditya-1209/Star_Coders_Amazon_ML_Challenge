@@ -3,7 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+
+
+# Everything defaults to the whole machine (i9-13900K: 32 threads). Pass
+# --threads explicitly to share the machine with other work.
+DEFAULT_THREADS = os.cpu_count() or 8
+BATCH_ROWS = 1_000_000  # dense rows per GPU predict call (~260 MB at 65 float32 features)
 
 
 def positive_int(value: str) -> int:

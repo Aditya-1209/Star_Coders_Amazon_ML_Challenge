@@ -20,7 +20,7 @@ import xgboost as xgb
 import polars as pl
 
 from .train import context_features, decide, predict_frame
-from .runtime import feature_parts, positive_int
+from .runtime import BATCH_ROWS, DEFAULT_THREADS, feature_parts, positive_int
 
 
 def write_lists(path: Path, s1: pl.DataFrame, pairs: pl.DataFrame, tg_ids: pl.Series, col: str) -> None:
@@ -44,8 +44,8 @@ def main() -> None:
     ap.add_argument("--prune", type=float, default=None, help="stage-1 score floor for candidates")
     ap.add_argument("--feats", default=None, help="test feature folder (default work/feats_test)")
     ap.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
-    ap.add_argument("--threads", type=positive_int, default=12)
-    ap.add_argument("--batch-rows", type=positive_int, default=250_000)
+    ap.add_argument("--threads", type=positive_int, default=DEFAULT_THREADS)
+    ap.add_argument("--batch-rows", type=positive_int, default=BATCH_ROWS)
     args = ap.parse_args()
     work, mdir, out = Path(args.work), Path(args.model_dir), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)

@@ -17,11 +17,11 @@ import polars as pl
 import xgboost as xgb
 
 from .block import build_target_index, make_keys
-from .features import compute, pair_frame, record_frames
-from .graph import HOP_MIN_SUPPORT, anchors_of, expand, support_features
-from .metrics import macro_f05
+from .features import compute, pair_frame, record_frames, token_idf
+from .graph import anchors_of, expand, hop_keep, support_features
+from .metrics import by_country, leaderboard_estimate, macro_f05
 from .run_block import load_split
-from .runtime import feature_parts, positive_int
+from .runtime import BATCH_ROWS, DEFAULT_THREADS, feature_parts, positive_int
 from .train import PARAMS, decide, fit, fold_expr, predict_frame
 
 TRAIN_FOLDS, TUNE_FOLD, HOLD_FOLD = [6, 7], 3, 4
@@ -29,7 +29,7 @@ BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc"
 
 
 def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
-          batch_rows: int = 250_000, support_anchors: int = 5_000, workers: int = 12,
+          batch_rows: int = BATCH_ROWS, support_anchors: int = 100_000, workers: int = DEFAULT_THREADS,
           prune_hops: bool = True) -> pl.DataFrame:
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
     s1, tg = load_split(work, split)
@@ -68,14 +68,15 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
         old = old.drop("label")
     new_pairs = keyset.join(old.select("sidx", "tidx"), on=["sidx", "tidx"], how="anti")
     left, right = record_frames(s1, tg)
+    idf = token_idf(tg)
     new_parts = []
     for batch in new_pairs.iter_slices(batch_rows):
         batch = batch.with_columns(*[pl.lit(None, pl.Float32).alias(c) for c in BLOCK_COLS])
-        new_parts.append(compute(pair_frame(batch, left, right, n_s2), workers=workers).select(old.columns))
+        new_parts.append(compute(pair_frame(batch, left, right, n_s2), workers=workers, idf=idf).select(old.columns))
     newf = pl.concat(new_parts) if new_parts else old.head(0)
     log(f"computed features for {len(newf):,} new pairs")
     base = pl.concat([old, newf.select(old.columns)], how="vertical_relaxed")
-    del old, newf, new_parts, new_pairs, left, s1, tg
+    del old, newf, new_parts, new_pairs, left, s1, tg, idf
     gc.collect()
 
     txt = right.select("idx", "core_r", "addr_r", "cc_r")
@@ -90,7 +91,7 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
     out = base.join(pairs, on=["sidx", "tidx"], how="left").join(sup, on=["sidx", "tidx"], how="left")
     if prune_hops:
         before = len(out)
-        out = out.filter((pl.col("direct") == 1) | (pl.col("sup_both_max") >= HOP_MIN_SUPPORT))
+        out = out.filter(hop_keep())
         log(f"two-hop support filter: {before:,} -> {len(out):,} candidates")
     log(f"support features done, {out.width} columns")
     return out
@@ -108,11 +109,14 @@ def main() -> None:
     ap.add_argument("--output", default="output")
     ap.add_argument("--dataset", default="student_resource/dataset")
     ap.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
-    ap.add_argument("--threads", type=positive_int, default=12)
-    ap.add_argument("--batch-rows", type=positive_int, default=250_000)
-    ap.add_argument("--support-anchors", type=positive_int, default=5_000)
+    ap.add_argument("--threads", type=positive_int, default=DEFAULT_THREADS)
+    ap.add_argument("--batch-rows", type=positive_int, default=BATCH_ROWS)
+    ap.add_argument("--support-anchors", type=positive_int, default=100_000)
     ap.add_argument("--rounds", type=positive_int, default=2000)
+    ap.add_argument("--exclude-country", nargs="*", default=[],
+                    help="leave these countries out of stage-3 training (unseen-country proxy)")
     args = ap.parse_args()
+    tag = "".join(f"_no{c}" for c in args.exclude_country)
     work, mdir = Path(args.work), Path(args.model_dir)
     t = time.time()
     log = lambda m: print(f"[{time.time() - t:6.0f}s] {m}", flush=True)
@@ -121,7 +125,7 @@ def main() -> None:
 
     if args.split == "train":
         from .run_features import ground_truth_pairs
-        st2 = pl.read_parquet(work / "stage2_train.parquet").with_columns(fold_expr())
+        st2 = pl.read_parquet(work / f"stage2_train{tag}.parquet").with_columns(fold_expr())
         keep = TRAIN_FOLDS + [TUNE_FOLD, HOLD_FOLD]
         st2 = st2.filter(pl.col("fold").is_in(keep)).drop("label", "fold")
         df = build("train", work, st2, work / "feats_train", log, prune_hops=False, **build_options)
@@ -129,9 +133,12 @@ def main() -> None:
         truth = ground_truth_pairs(Path(args.dataset), s1, tg)
         df = df.join(truth.with_columns(label=pl.lit(1, pl.Int8)), on=["sidx", "tidx"], how="left")
         df = df.with_columns(pl.col("label").fill_null(0), fold_expr())
-        df.write_parquet(work / "stage3_train.parquet")
+        df.write_parquet(work / f"stage3_train{tag}.parquet")
         feats = feature_cols(df)
-        tr = df.filter(pl.col("fold").is_in(TRAIN_FOLDS))
+        country = s1.select(sidx=pl.col("idx").cast(pl.UInt32), country="country")
+        seen = ~pl.col("sidx").is_in(
+            country.filter(pl.col("country").is_in(args.exclude_country))["sidx"])
+        tr = df.filter(pl.col("fold").is_in(TRAIN_FOLDS) & seen)
         va = df.filter(pl.col("fold") == TUNE_FOLD)
         m3 = fit(tr, feats, va, args.rounds, {**PARAMS, "device": args.device, "nthread": args.threads})
         del tr, va
@@ -139,20 +146,22 @@ def main() -> None:
         m3.save_model(str(mdir / "stage3.json"))
         log(f"stage3 trained ({m3.best_iteration} it)")
         ev = df.filter(pl.col("fold").is_in([TUNE_FOLD, HOLD_FOLD]))
+        # Evaluate exactly the candidate set the test run keeps (same hop filter).
+        ev = ev.filter(hop_keep())
         ev = ev.select("sidx", "tidx", "fold", "p2", "direct").with_columns(
             p3=pl.Series(predict_frame(m3, ev, feats, args.batch_rows)))
         truth = truth.with_columns(fold_expr())
-        anchors = s1.select(sidx=pl.col("idx").cast(pl.UInt32)).with_columns(fold_expr())
+        anchors = country.with_columns(fold_expr())
         best = (0.0, 0.5)
         tune = ev.filter(pl.col("fold") == TUNE_FOLD)
-        a3 = anchors.filter(pl.col("fold") == TUNE_FOLD)["sidx"]
+        a3 = anchors.filter((pl.col("fold") == TUNE_FOLD) & ~pl.col("country").is_in(args.exclude_country))["sidx"]
         t3 = truth.filter(pl.col("fold") == TUNE_FOLD)
         for thr in np.arange(0.3, 0.95, 0.025):
             r = macro_f05(decide(tune, thr, "p3"), t3, a3)["macro_f05"]
             best = max(best, (r, float(thr)))
         thr = best[1]
         res = {"threshold": thr, "features": feats, "best_iteration": m3.best_iteration,
-               "feature_version": "r4", "runtime": {"device": args.device, "threads": args.threads,
+               "feature_version": "r5", "runtime": {"device": args.device, "threads": args.threads,
                "batch_rows": args.batch_rows, "support_anchors": args.support_anchors}}
         for fold in (TUNE_FOLD, HOLD_FOLD):
             e = ev.filter(pl.col("fold") == fold)
@@ -163,8 +172,19 @@ def main() -> None:
                 decide(e.filter(pl.col("p2").is_not_null()), meta_thr(mdir), "p2"), tr_, a)
             res[f"fold{fold}_oracle"] = macro_f05(e.join(tr_, on=["sidx", "tidx"]), tr_, a)
             res[f"fold{fold}_mean_candidates"] = len(e) / len(a)
+        hold = ev.filter(pl.col("fold") == HOLD_FOLD)
+        per = by_country(decide(hold, thr, "p3"), truth.filter(pl.col("fold") == HOLD_FOLD),
+                         anchors.filter(pl.col("fold") == HOLD_FOLD))
+        res["fold4_by_country"] = per
+        res["leaderboard_estimate"] = leaderboard_estimate(per)
+        res["excluded_countries"] = args.exclude_country
+        for c, v in per.items():
+            print(f"fold4 {c:8s} F0.5={v['macro_f05']:.4f} P={v['pair_precision']:.4f} R={v['pair_recall']:.4f}")
+        print(f"leaderboard estimate {res['leaderboard_estimate']['estimate']:.4f}")
         (mdir / "stage3_metrics.json").write_text(json.dumps(res, indent=2))
         for k, v in res.items():
+            if k in ("fold4_by_country", "leaderboard_estimate", "runtime"):
+                continue
             if isinstance(v, dict) and "macro_f05" in v:
                 print(f"{k:22s} F0.5={v['macro_f05']:.4f} P={v['pair_precision']:.4f} R={v['pair_recall']:.4f}")
             elif k != "features":
@@ -174,8 +194,8 @@ def main() -> None:
     # test
     from .predict import write_lists
     meta = json.loads((mdir / "stage3_metrics.json").read_text())
-    if meta.get("feature_version") != "r4":
-        raise ValueError("Stage-3 graph features changed in r4; retrain er_v2.stage3 --split train first")
+    if meta.get("feature_version") != "r5":
+        raise ValueError("Stage-3 features changed in r5; retrain er_v2.stage3 --split train first")
     st2 = pl.read_parquet(work / "test_preds.parquet")
     df = build("test", work, st2, work / "feats_test", log, **build_options)
     m3 = xgb.Booster(model_file=str(mdir / "stage3.json"))

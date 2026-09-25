@@ -37,6 +37,16 @@ SUPPORT_SCHEMA = {"sidx": pl.UInt32, "tidx": pl.UInt32, "n_anchor": pl.UInt16,
 # both name and address (min of the two token-set scores). Measured on fold 3:
 # 19.7 -> 5.6 candidates per Source 1 at unchanged macro F0.5 (0.9631 -> 0.9630).
 HOP_MIN_SUPPORT = 50
+# Records with a blank address can never reach sup_both (address similarity is 0),
+# so they may pass on the name alone when it is near-identical to an anchor's.
+HOP_NAME_ONLY = 90
+
+
+def hop_keep() -> pl.Expr:
+    """Candidate-set rule shared by stage-3 training evaluation and test inference."""
+    return ((pl.col("direct") == 1)
+            | (pl.col("sup_both_max") >= HOP_MIN_SUPPORT)
+            | ((pl.col("sup_addr_valid") == 0) & (pl.col("sup_name_tset") >= HOP_NAME_ONLY)))
 
 
 def anchors_of(stage2: pl.DataFrame) -> pl.DataFrame:
