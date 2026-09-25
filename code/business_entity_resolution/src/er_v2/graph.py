@@ -33,6 +33,10 @@ SUPPORT_SCHEMA = {"sidx": pl.UInt32, "tidx": pl.UInt32, "n_anchor": pl.UInt16,
                       "sup_cc_partial", "sup_addr_tset", "sup_addr_ratio")},
                   "sup_addr_valid": pl.Int8, "sup_n90": pl.UInt16, "sup_nboth80": pl.UInt16,
                   "pa_max": pl.Float32}
+# A two-hop candidate is kept only if it resembles one of the business's anchors on
+# both name and address (min of the two token-set scores). Measured on fold 3:
+# 19.7 -> 5.6 candidates per Source 1 at unchanged macro F0.5 (0.9631 -> 0.9630).
+HOP_MIN_SUPPORT = 50
 
 
 def anchors_of(stage2: pl.DataFrame) -> pl.DataFrame:

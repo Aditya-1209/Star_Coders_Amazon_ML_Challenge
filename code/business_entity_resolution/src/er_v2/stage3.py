@@ -18,7 +18,7 @@ import xgboost as xgb
 
 from .block import build_target_index, make_keys
 from .features import compute, pair_frame, record_frames
-from .graph import anchors_of, expand, support_features
+from .graph import HOP_MIN_SUPPORT, anchors_of, expand, support_features
 from .metrics import macro_f05
 from .run_block import load_split
 from .runtime import feature_parts, positive_int
@@ -29,7 +29,8 @@ BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc"
 
 
 def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
-          batch_rows: int = 250_000, support_anchors: int = 5_000, workers: int = 12) -> pl.DataFrame:
+          batch_rows: int = 250_000, support_anchors: int = 5_000, workers: int = 12,
+          prune_hops: bool = True) -> pl.DataFrame:
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
     s1, tg = load_split(work, split)
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
@@ -87,6 +88,10 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
     del right
     gc.collect()
     out = base.join(pairs, on=["sidx", "tidx"], how="left").join(sup, on=["sidx", "tidx"], how="left")
+    if prune_hops:
+        before = len(out)
+        out = out.filter((pl.col("direct") == 1) | (pl.col("sup_both_max") >= HOP_MIN_SUPPORT))
+        log(f"two-hop support filter: {before:,} -> {len(out):,} candidates")
     log(f"support features done, {out.width} columns")
     return out
 
@@ -119,7 +124,7 @@ def main() -> None:
         st2 = pl.read_parquet(work / "stage2_train.parquet").with_columns(fold_expr())
         keep = TRAIN_FOLDS + [TUNE_FOLD, HOLD_FOLD]
         st2 = st2.filter(pl.col("fold").is_in(keep)).drop("label", "fold")
-        df = build("train", work, st2, work / "feats_train", log, **build_options)
+        df = build("train", work, st2, work / "feats_train", log, prune_hops=False, **build_options)
         s1, tg = load_split(work, "train")
         truth = ground_truth_pairs(Path(args.dataset), s1, tg)
         df = df.join(truth.with_columns(label=pl.lit(1, pl.Int8)), on=["sidx", "tidx"], how="left")
