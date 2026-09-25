@@ -1,8 +1,14 @@
 # Star Coders: Business Entity Resolution (v2 pipeline)
 
-For the r4 branch, follow `docs/README_r4.md` from the repository root. Stage 3
-requires retraining after r4's missing-address support fix; old stage-3 models
-are rejected. No new accuracy or performance measurements are claimed for r4.
+For the r4 branch, follow `docs/README_r4.md` from the repository root. Regenerate
+candidates/features and retrain all stages for the accuracy update. It adds
+separate name/address candidate lists, 63 pair features, two complementary
+stage-1 models, exact macro-F0.5 threshold selection, and a validation-selected
+stage-2/3 mixture. Old weights do not implement these changes. No new accuracy
+or performance measurements are claimed for r4.
+
+The remainder of this file documents the **historical v2 model**. Its timing,
+memory measurements and reproduction commands are not the current r4 workflow.
 
 Matches every test Source 1 business to its Source 2 / Source 3 records using
 only the challenge data. Pipeline: text normalization, then weighted

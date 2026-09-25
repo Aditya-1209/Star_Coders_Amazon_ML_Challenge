@@ -1,8 +1,8 @@
 """Stage 5: score test candidates with the two-stage model and write outputs.
 
-Candidate generation is a cascade: key blocking (top 64) followed by the
-stage-1 model acting as a learned candidate ranker; pairs with p1 below
-``prune`` are discarded. The surviving pairs (~5 per Source 1) are the final
+Candidate generation is a cascade: key blocking (combined and channel lists) followed by the
+stage-1 ensemble acting as a learned candidate ranker; pairs with p1 below
+``prune`` are discarded. The surviving pairs are the stage-2
 candidate set: exactly the pairs the stage-2 matcher runs inference over.
 
 Writes, in Source 1 file order and with one row per Source 1 record:
@@ -19,7 +19,8 @@ from pathlib import Path
 import xgboost as xgb
 import polars as pl
 
-from .train import context_features, decide, predict_frame
+from .train import context_features, decide, predict_frame, predict_ensemble
+from .decision import NO_MATCH_THRESHOLD
 from .runtime import feature_parts, positive_int
 
 
@@ -52,12 +53,16 @@ def main() -> None:
     meta = json.loads((mdir / "metrics.json").read_text())
     thr = args.threshold if args.threshold is not None else meta["threshold"]
     prune = args.prune if args.prune is not None else meta.get("prune", 0.001)
-    if not 0 <= thr <= 1 or not 0 <= prune <= 1:
-        raise ValueError("Threshold and prune must be between 0 and 1")
+    if not 0 <= thr <= NO_MATCH_THRESHOLD or not 0 <= prune <= 1:
+        raise ValueError("Invalid saved threshold or prune value")
+    if args.threshold is not None and not 0 <= args.threshold <= 1:
+        raise ValueError("An explicit --threshold must be between 0 and 1")
     f1, f2 = meta["stage1_features"], meta["stage2_features"]
-    m1 = xgb.Booster(model_file=str(mdir / "stage1.json"))
+    rankers = [xgb.Booster(model_file=str(mdir / name))
+               for name in meta.get("stage1_models", ["stage1.json"])]
     m2 = xgb.Booster(model_file=str(mdir / "stage2.json"))
-    m1.set_param({"device": args.device, "nthread": args.threads})
+    for model in rankers:
+        model.set_param({"device": args.device, "nthread": args.threads})
     m2.set_param({"device": args.device, "nthread": args.threads})
     t = time.time()
 
@@ -66,7 +71,7 @@ def main() -> None:
     for p in parts:
         df = pl.read_parquet(p)
         scores.append(df.select("sidx", "tidx").with_columns(
-            p1=pl.Series(predict_frame(m1, df, f1, args.batch_rows))))
+            p1=pl.Series(predict_ensemble(rankers, df, f1, args.batch_rows))))
     scores = pl.concat(scores)
     ctx = context_features(scores)
     print(f"stage1 done {len(scores):,} pairs, {time.time() - t:.0f}s", flush=True)

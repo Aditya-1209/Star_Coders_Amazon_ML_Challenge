@@ -12,17 +12,17 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import xgboost as xgb
 
 from .block import build_target_index, make_keys
 from .features import compute, pair_frame, record_frames
+from .decision import NO_MATCH_THRESHOLD, blend_scores, tune_blend
 from .graph import anchors_of, expand, support_features
 from .metrics import macro_f05
 from .run_block import load_split
 from .runtime import feature_parts, positive_int
-from .train import PARAMS, decide, fit, fold_expr, predict_frame
+from .train import FEATURE_VERSION, PARAMS, decide, fit, fold_expr, predict_frame
 
 TRAIN_FOLDS, TUNE_FOLD, HOLD_FOLD = [6, 7], 3, 4
 BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc", "s_nc"]
@@ -113,6 +113,9 @@ def main() -> None:
     log = lambda m: print(f"[{time.time() - t:6.0f}s] {m}", flush=True)
     build_options = {"batch_rows": args.batch_rows, "support_anchors": args.support_anchors,
                      "workers": args.threads}
+    stage2_meta = json.loads((mdir / "metrics.json").read_text(encoding="utf-8"))
+    if stage2_meta.get("feature_version") != FEATURE_VERSION:
+        raise ValueError("Regenerate accuracy features and retrain er_v2.train before stage 3")
 
     if args.split == "train":
         from .run_features import ground_truth_pairs
@@ -138,22 +141,26 @@ def main() -> None:
             p3=pl.Series(predict_frame(m3, ev, feats, args.batch_rows)))
         truth = truth.with_columns(fold_expr())
         anchors = s1.select(sidx=pl.col("idx").cast(pl.UInt32)).with_columns(fold_expr())
-        best = (0.0, 0.5)
+        del df, s1, tg
         tune = ev.filter(pl.col("fold") == TUNE_FOLD)
         a3 = anchors.filter(pl.col("fold") == TUNE_FOLD)["sidx"]
         t3 = truth.filter(pl.col("fold") == TUNE_FOLD)
-        for thr in np.arange(0.3, 0.95, 0.025):
-            r = macro_f05(decide(tune, thr, "p3"), t3, a3)["macro_f05"]
-            best = max(best, (r, float(thr)))
-        thr = best[1]
-        res = {"threshold": thr, "features": feats, "best_iteration": m3.best_iteration,
-               "feature_version": "r4", "runtime": {"device": args.device, "threads": args.threads,
+        selection = tune_blend(tune, t3, a3)
+        thr = selection["threshold"]
+        pure_threshold = selection["tuning_trials"][-1]["threshold"]
+        res = {**selection, "stage3_threshold": pure_threshold,
+               "features": feats, "best_iteration": m3.best_iteration,
+               "feature_version": FEATURE_VERSION, "selection_fold": TUNE_FOLD,
+               "runtime": {"device": args.device, "threads": args.threads,
                "batch_rows": args.batch_rows, "support_anchors": args.support_anchors}}
+        ev = blend_scores(ev, selection["stage3_weight"])
+        ev.write_parquet(work / "eval_preds_stage3.parquet")
         for fold in (TUNE_FOLD, HOLD_FOLD):
             e = ev.filter(pl.col("fold") == fold)
             a = anchors.filter(pl.col("fold") == fold)["sidx"]
             tr_ = truth.filter(pl.col("fold") == fold)
-            res[f"fold{fold}_stage3"] = macro_f05(decide(e, thr, "p3"), tr_, a)
+            res[f"fold{fold}_selected"] = macro_f05(decide(e, thr, "score"), tr_, a)
+            res[f"fold{fold}_stage3"] = macro_f05(decide(e, pure_threshold, "p3"), tr_, a)
             res[f"fold{fold}_stage2_ref"] = macro_f05(
                 decide(e.filter(pl.col("p2").is_not_null()), meta_thr(mdir), "p2"), tr_, a)
             res[f"fold{fold}_oracle"] = macro_f05(e.join(tr_, on=["sidx", "tidx"]), tr_, a)
@@ -169,25 +176,26 @@ def main() -> None:
     # test
     from .predict import write_lists
     meta = json.loads((mdir / "stage3_metrics.json").read_text())
-    if meta.get("feature_version") != "r4":
-        raise ValueError("Stage-3 graph features changed in r4; retrain er_v2.stage3 --split train first")
+    if meta.get("feature_version") != FEATURE_VERSION:
+        raise ValueError("Stage-3 accuracy features changed; retrain er_v2.stage3 --split train first")
     st2 = pl.read_parquet(work / "test_preds.parquet")
     df = build("test", work, st2, work / "feats_test", log, **build_options)
     m3 = xgb.Booster(model_file=str(mdir / "stage3.json"))
     m3.set_param({"device": args.device, "nthread": args.threads})
-    preds = df.select("sidx", "tidx").with_columns(
+    preds = df.select("sidx", "tidx", "p2").with_columns(
         p3=pl.Series(predict_frame(m3, df, meta["features"], args.batch_rows)))
+    preds = blend_scores(preds, meta["stage3_weight"])
     preds.write_parquet(work / "test_preds_stage3.parquet")
-    matches = decide(preds, meta["threshold"], "p3")
+    matches = decide(preds, meta["threshold"], "score")
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
     norm = work / "norm"
     s1 = pl.read_parquet(norm / "test_source1.parquet", columns=["idx", "entity_id"])
     tg_ids = pl.concat([pl.read_parquet(norm / "test_source2.parquet", columns=["entity_id"]),
                         pl.read_parquet(norm / "test_source3.parquet", columns=["entity_id"])])["entity_id"]
-    write_lists(out / "candidate_pairs.tsv", s1, preds.sort("sidx", "p3", descending=[False, True]),
+    write_lists(out / "candidate_pairs.tsv", s1, preds.sort("sidx", "score", descending=[False, True]),
                 tg_ids, "candidate_entity_ids")
-    write_lists(out / "matching_results.tsv", s1, matches.sort("sidx", "p3", descending=[False, True]),
+    write_lists(out / "matching_results.tsv", s1, matches.sort("sidx", "score", descending=[False, True]),
                 tg_ids, "matched_entity_ids")
     log(f"{len(matches):,} matches, {len(preds) / len(s1):.2f} candidates per source1")
 
@@ -195,7 +203,7 @@ def main() -> None:
 def meta_thr(model_dir: Path) -> float:
     """Use the same model directory as the run; never guess a threshold."""
     value = json.loads((model_dir / "metrics.json").read_text(encoding="utf-8"))["threshold"]
-    if not 0 <= value <= 1:
+    if not 0 <= value <= NO_MATCH_THRESHOLD:
         raise ValueError(f"Invalid stage-2 threshold in {model_dir / 'metrics.json'}")
     return float(value)
 
