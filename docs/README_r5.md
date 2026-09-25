@@ -1,8 +1,9 @@
 # r5-recall-speed
 
 Based on `r2-translit` at `427aa32`. The reported **94.3% public leaderboard**
-result is the team's r2 result, not a result reproduced here. **97.5% has not
-been demonstrated.** This branch is ready for a full desktop experiment.
+result is the team's r2 result, not a result reproduced here. **98% has not
+been demonstrated.** This branch needs a full-corpus validation run before any
+accuracy or runtime claim on the target hardware.
 
 ## What changed
 
@@ -24,15 +25,21 @@ been demonstrated.** This branch is ready for a full desktop experiment.
   for survivors. Retain **all** stage-1 scores for identical global context.
 - Avoid duplicate out-of-fold model predictions and discard stage-1 rejects
   before the stage-2 feature join. Use 250,000-row dense prediction batches.
+- Score stage 2 at two stage-1 floors (0.001 and 0.0001) from one trained model;
+  select the floor and matching threshold on fold 3. This can retain low-scored
+  true pairs that r2's fixed floor removed. Fold 4 remains untouched for reporting.
+- Expand high-confidence stage-2 anchors through shared target keys to find
+  two-hop candidate pairs. Train a third XGBoost matcher using direct-pair and
+  anchor-support features. Select stage 2 or stage 3 on fold 3, then report the
+  selected model on fold 4. If stage 2 wins, its exact TSVs become the output.
 - Carry over r4's deterministic tie handling, empty-frame support, small-fold
-  fixes, duplicate-safe metric, atomic TSV writes and feature manifests. r3/r4's
-  two-hop stage is not enabled in this branch; its extra runtime is unmeasured.
+  fixes, duplicate-safe metric, atomic TSV writes and feature manifests.
 - Add a runner with completed-stage checkpoints, input/code fingerprints,
   per-stage timing logs and the official validator with ID checks.
 
 No external business data, lookup APIs, geocoders or pretrained weights are used.
 The PDF and student README were read; scoring is **macro F0.5 with singletons**,
-and the candidate output is exactly the set scored by the final stage-2 matcher.
+and the candidate output is exactly the set scored by the selected final matcher.
 
 ## Measured results and their limits
 
@@ -50,6 +57,13 @@ It is not evidence for a 99% leaderboard score or statistical significance.
 | Holdout pair recall | 0.989163 | 0.986207 |
 | Candidate pairs across 6,000 S1 | 376,239 | 400,563 |
 | Raw blocking recall across 6,000 S1 | 0.996860 | 0.997198 |
+
+With the added stage 3, the same sampled fold-4 macro F0.5 was **0.992975**
+(vs **0.991830** for r5 stage 2). Fold-3 tuning selected stage 3 at **0.994752**
+versus **0.992868** for stage 2. The graph candidate ceiling on fold 4 was
+**0.999458**. The lower stage-1 floor tied on fold 3, so the original 0.001
+floor was selected. These are development measurements only; a 98% public
+leaderboard result cannot be inferred from them.
 
 The reference shares the bounded runtime/correctness fixes and sampled
 normalization with r5, but uses the original r2 feature set, original candidates
@@ -71,7 +85,7 @@ Cached versus ordinary inference on the development engineering fixture:
 - Total feature-generation-plus-inference time was **13.52s ordinary vs 14.30s
   cached**. It was slightly slower on this small corpus. Full-scale disk/memory
   savings must be timed on the i9/RTX machine.
-- Seven unit regressions passed. The complete CLI workflow passed the official
+- Ten unit regressions passed. The complete three-stage CLI workflow passed the official
   validator, including ID existence checks, on a 6,000-row engineering fixture.
   Training records were reused as unlabelled inputs solely for that I/O check;
   its predictions are **not a test submission or a generalization score**.
@@ -108,8 +122,11 @@ In the workspace used to develop this branch the dataset argument is:
 
 Outputs and logs:
 
-- `work/r5/models/metrics.json`: selected policy, fold 3/4 scores, per-country
-  results, raw-blocking oracle and post-stage-1-pruning oracle.
+- `work/r5/models/metrics.json`: stage-2 policy, floor choice, fold 3/4 scores,
+  per-country results, raw-blocking oracle and post-pruning oracle.
+- `work/r5/models/stage3_metrics.json`: selected final stage, fold 3/4 scores,
+  and graph candidate ceiling. Inspect this before deciding whether 98% is
+  plausible on the full validation fold.
 - `work/r5/checkpoints/*.log` and `*.json`: per-stage logs, times and fingerprints.
 - `output/r5/matching_results.tsv`: upload this to the challenge portal only after
   the full run and official validation finish.
@@ -118,6 +135,8 @@ Outputs and logs:
 Keep the workspace on an SSD. Global normalized records, candidate context and
 training matrices still consume RAM; this is not a fully disk-backed trainer.
 If memory is tight, use `--shard-pairs 500000 --block-chunk 2000` in a fresh run.
+The graph stage may still need more than 32 GB on the full corpus; see
+`docs/AWS_r5.md` for the cloud run setup.
 
 Add `--resume` to the **same command** to reuse completed stages. It refuses
 changed commands, code, inputs or recorded outputs. Interrupted feature shards
@@ -127,9 +146,10 @@ with the same work directory to generate test outputs from those models.
 
 For a blocking ablation, run in a different work/output directory with
 `--rescue-k 0`. Do not change retrieval settings between training and prediction.
-Check the **raw-blocking oracle first**: if its macro F0.5 is below 0.975, matching
-threshold changes alone cannot reach the target on that validation population.
-Compare both country scores and the singleton-sensitive macro score; do not
+For a stage-2-only ablation, add `--no-stage3` in a fresh work/output directory.
+Check the **stage-3 candidate oracle** and the selected fold-4 macro F0.5:
+if the oracle is below 0.98, no threshold change can achieve 98% on that
+validation population. Compare both country scores and the singleton-sensitive macro score; do not
 choose thresholds using fold 4 or repeatedly tune to a public leaderboard score.
 
 ## Reproduce the development checks

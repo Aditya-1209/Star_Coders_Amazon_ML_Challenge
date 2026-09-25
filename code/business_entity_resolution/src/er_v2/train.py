@@ -25,7 +25,10 @@ from .decision import best_per_target, expected_f05_select
 from .runtime import feature_parts, positive_int
 
 N_FOLDS = 10
-PRUNE = 0.001  # stage-1 floor that defines the final candidate set (see predict.py)
+# Score both floors from the same stage-2 model, then choose on fold 3 only.
+# A lower floor can recover true pairs discarded by r2's stage-1 filter.
+PRUNE_GRID = (0.001, 0.0001)
+PRUNE = min(PRUNE_GRID)
 PARAMS = dict(objective="binary:logistic", eval_metric="logloss", tree_method="hist",
               device="cuda", eta=0.08, max_depth=10, min_child_weight=5, subsample=0.8,
               colsample_bytree=0.8, reg_lambda=1.0, max_bin=256, seed=42)
@@ -198,11 +201,9 @@ def main() -> None:
         allp.append(part.select("sidx", "tidx", "fold", "p1", "label").with_columns(
             p2=pl.Series(predict_frame(m2, part, f2, args.batch_rows))))
     allp = pl.concat(allp)
-    allp.write_parquet(work / "stage2_train.parquet")
     del ctx_full
     ev = allp.filter(pl.col("fold").is_in([3, 4]))
     del ctx
-    ev.write_parquet(work / "eval_preds.parquet")
 
     # truth + anchors for folds 3/4: all source1 records, incl. singletons / uncovered
     from .run_block import load_split
@@ -212,13 +213,26 @@ def main() -> None:
     anchors = s1.select(sidx=pl.col("idx").cast(pl.UInt32)).with_columns(fold_expr())
 
     results = {}
-    best = (0, 0.5)
-    for thr in np.arange(0.2, 0.95, 0.025):
-        r = macro_f05(decide(ev.filter(pl.col("fold") == 3), thr), truth.filter(pl.col("fold") == 3),
-                      anchors.filter(pl.col("fold") == 3)["sidx"])
-        if r["macro_f05"] > best[0]:
-            best = (r["macro_f05"], float(thr))
-    thr = best[1]
+    best = (0.0, 0.5, PRUNE_GRID[0])
+    prune_tuning = {}
+    for prune in PRUNE_GRID:
+        tune_subset = ev.filter((pl.col('fold') == 3) & (pl.col('p1') >= prune))
+        local = (0.0, 0.5)
+        for threshold in np.arange(0.2, 0.95, 0.025):
+            r = macro_f05(decide(tune_subset, threshold), truth.filter(pl.col('fold') == 3),
+                          anchors.filter(pl.col('fold') == 3)['sidx'])['macro_f05']
+            if r > local[0]:
+                local = (r, float(threshold))
+        prune_tuning[str(prune)] = {'macro_f05': local[0], 'threshold': local[1]}
+        # Preserve the cheaper original floor when scores tie.
+        if local[0] > best[0] + 1e-10:
+            best = (local[0], local[1], prune)
+    thr, selected_prune = best[1], best[2]
+    # Stage 3 and the final candidate file must use the same chosen set.
+    allp = allp.filter(pl.col('p1') >= selected_prune)
+    allp.write_parquet(work / 'stage2_train.parquet')
+    ev = allp.filter(pl.col('fold').is_in([3, 4]))
+    ev.write_parquet(work / 'eval_preds.parquet')
     policy = {'kind': 'threshold', 'threshold': thr}
     tune = ev.filter(pl.col('fold') == 3)
     tune_truth = truth.filter(pl.col('fold') == 3)
@@ -241,7 +255,9 @@ def main() -> None:
     results["threshold"] = thr
     results['decision_policy'] = policy
     results['feature_version'] = 'r5'
-    results["prune"] = PRUNE
+    results["prune"] = selected_prune
+    results['prune_tuning'] = prune_tuning
+    results['minimum_prune_scored'] = PRUNE
     results["runtime"] = {"device": args.device, "threads": args.threads, "batch_rows": args.batch_rows}
     results["stage2_training_folds"] = [2, 5]
     results["stage3_eligible_folds"] = [3, 4, 6, 7]

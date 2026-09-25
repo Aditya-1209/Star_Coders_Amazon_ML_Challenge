@@ -34,6 +34,7 @@ def main():
     ap.add_argument('--rescue-k', type=int, default=12)
     ap.add_argument('--rounds', type=positive, default=1500)
     ap.add_argument('--phase', choices=['all', 'train', 'predict'], default='all')
+    ap.add_argument('--no-stage3', action='store_true', help='Keep stage 2 as final model for an ablation')
     ap.add_argument('--resume', action='store_true')
     args = ap.parse_args()
     if args.rescue_k < 0:
@@ -116,11 +117,27 @@ def main():
                   '--device', args.device, '--threads', args.threads, '--rounds', args.rounds],
                   norm+[features/'manifest.json', train_files[-1], cands],
                   [models/'stage1.json', models/'stage2.json', models/'metrics.json', work/'eval_preds.parquet'])
+            if not args.no_stage3:
+                stage('train-stage3', ['er_v2.stage3', '--dataset', dataset, '--work', work,
+                      '--model-dir', models, '--split', 'train', '--device', args.device,
+                      '--threads', args.threads, '--rounds', args.rounds],
+                      norm+[features/'manifest.json', models/'stage2.json', models/'metrics.json',
+                            work/'stage2_train.parquet'],
+                      [models/'stage3.json', models/'stage3_metrics.json'])
         else:
             outputs = [output/'matching_results.tsv', output/'candidate_pairs.tsv']
-            stage('predict', ['er_v2.predict', '--work', work, '--model-dir', models, '--output', output,
-                  '--device', args.device, '--threads', args.threads],
-                  norm+[features/'manifest.json', models/'stage1.json', models/'stage2.json', models/'metrics.json'], outputs)
+            stage2_output = work/'stage2_output' if not args.no_stage3 else output
+            stage2_files = [stage2_output/'matching_results.tsv', stage2_output/'candidate_pairs.tsv']
+            stage('predict', ['er_v2.predict', '--work', work, '--model-dir', models,
+                  '--output', stage2_output, '--device', args.device, '--threads', args.threads],
+                  norm+[features/'manifest.json', models/'stage1.json', models/'stage2.json', models/'metrics.json'],
+                  stage2_files)
+            if not args.no_stage3:
+                stage('predict-stage3', ['er_v2.stage3', '--dataset', dataset, '--work', work,
+                      '--model-dir', models, '--split', 'test', '--output', output,
+                      '--stage2-output', stage2_output, '--device', args.device, '--threads', args.threads],
+                      norm+[features/'manifest.json', models/'stage3.json', models/'stage3_metrics.json',
+                            work/'test_preds.parquet']+stage2_files, outputs)
             validator = dataset.parent/'utils/validate_submission.py'
             if not validator.exists():
                 raise FileNotFoundError(f'Official validator required: {validator}')

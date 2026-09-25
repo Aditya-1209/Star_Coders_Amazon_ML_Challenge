@@ -1,11 +1,12 @@
 # Star Coders: r5 entity resolution
 
 This branch extends r2 with typo-tolerant candidate channels, bounded processing,
-exact feature optimizations and cached stage-1 test inference. Its score is macro
+exact feature optimizations, cached stage-1 test inference, and a two-hop graph
+matcher. Its score is macro
 F0.5 per S1 record, including singletons. Only organizer data are used.
 
 **Fresh training is required.** Historical `models/v2` files do not measure r5.
-Neither 97.5% leaderboard performance nor a full GPU runtime has been demonstrated.
+Neither 98% leaderboard performance nor a full GPU runtime has been demonstrated.
 See `docs/README_r5.md` at the repository root for measured results and the runner.
 
 ## Environment and desktop runner
@@ -48,16 +49,21 @@ python -m er_v2.prepare --dataset DATASET --work work/r5 --splits train --worker
 python -m er_v2.run_block --work work/r5 --split train --top-k 64 --rescue-k 12 --chunk 10000
 python -m er_v2.run_features --dataset DATASET --work work/r5 --split train --shard-pairs 1000000 --workers 12
 python -m er_v2.train --dataset DATASET --work work/r5 --model-dir work/r5/models --device cuda --threads 12
+python -m er_v2.stage3 --dataset DATASET --work work/r5 --model-dir work/r5/models --split train --device cuda --threads 12
 python -m er_v2.prepare --dataset DATASET --work work/r5 --splits test --workers 12 --translit work/r5/models/translit.json
 python -m er_v2.run_block --work work/r5 --split test --top-k 64 --rescue-k 12 --chunk 10000
 python -m er_v2.run_features --dataset DATASET --work work/r5 --split test --shard-pairs 1000000 --workers 12 --stage1-model-dir work/r5/models --device cuda
-python -m er_v2.predict --work work/r5 --model-dir work/r5/models --output output/r5 --device cuda --threads 12
+python -m er_v2.predict --work work/r5 --model-dir work/r5/models --output work/r5/stage2_output --device cuda --threads 12
+python -m er_v2.stage3 --dataset DATASET --work work/r5 --model-dir work/r5/models --split test --stage2-output work/r5/stage2_output --output output/r5 --device cuda --threads 12
 ```
 
 Inspect `work/r5/models/metrics.json` for tuning fold 3, reporting fold 4,
 per-country results and candidate-oracle ceilings. The learned transliteration
 map excludes folds 3/4. Test processing includes every country, including France.
 France has no training labels, so its accuracy cannot be measured locally.
+Inspect `work/r5/models/stage3_metrics.json` for the selected final stage and
+two-hop candidate ceiling. The full runner selects stage 2 when it scores at
+least as well as stage 3 on the tuning fold.
 
 Run the organizer validator after prediction, replacing `VALIDATOR` with the
 provided `student_resource/utils/validate_submission.py` path:
@@ -67,7 +73,7 @@ python VALIDATOR --matching output/r5/matching_results.tsv --candidate output/r5
 ```
 
 Both files have one row per test S1 entity. Final matches are a subset of the
-candidate file, which contains exactly the stage-2 inference pairs. Empty lists
+candidate file, which contains exactly the selected final-stage inference pairs. Empty lists
 remain empty, duplicates are removed, and each target has at most one S1 owner.
 Only the matching TSV is uploaded for leaderboard scoring.
 

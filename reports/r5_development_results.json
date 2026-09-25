@@ -476,6 +476,69 @@
     "translit": 1.5807993000053102
   },
   "official_validator": "PASS on the 6000-row engineering fixture; not a leaderboard submission",
-  "unit_regressions_passed": 7,
-  "completed_stage_resume_verified": true
+  "unit_regressions_passed": 10,
+  "completed_stage_resume_verified": true,
+  "r5_stage3": {
+    "selected_stage": "stage3",
+    "stage2_tuning_macro_f05": 0.9928678909987707,
+    "stage3_tuning_macro_f05": 0.9947519911400824,
+    "fold3_stage3": {
+      "macro_f05": 0.9947519911400824,
+      "pair_precision": 0.9976808905380334,
+      "pair_recall": 0.9907876554583142,
+      "anchors": 624
+    },
+    "fold3_oracle": {
+      "macro_f05": 0.9994947960693153,
+      "pair_precision": 1.0,
+      "pair_recall": 0.9981575310916628,
+      "anchors": 624
+    },
+    "fold4_stage3": {
+      "macro_f05": 0.9929751771741129,
+      "pair_precision": 0.9955445544554455,
+      "pair_recall": 0.99064039408867,
+      "anchors": 601
+    },
+    "fold4_stage2_ref": {
+      "macro_f05": 0.991830350010151,
+      "pair_precision": 0.9960199004975124,
+      "pair_recall": 0.9862068965517241,
+      "anchors": 601
+    },
+    "fold4_oracle": {
+      "macro_f05": 0.9994575238959598,
+      "pair_precision": 1.0,
+      "pair_recall": 0.9975369458128078,
+      "anchors": 601
+    },
+    "fold4_mean_candidates": 16.252911813643927
+  },
+  "r5_prune_tuning": {
+    "prune": 0.001,
+    "prune_tuning": {
+      "0.001": {
+        "macro_f05": 0.9928678909987709,
+        "threshold": 0.7749999999999999
+      },
+      "0.0001": {
+        "macro_f05": 0.9928678909987707,
+        "threshold": 0.7749999999999999
+      }
+    },
+    "minimum_prune_scored": 0.0001
+  },
+  "three_stage_runner_timings": {
+    "block-test": 5.418133900006069,
+    "block-train": 5.957893500002683,
+    "features-test": 12.41888409999956,
+    "features-train": 13.268061400005536,
+    "normalize-test": 4.006759999996575,
+    "normalize-train": 6.00125190000108,
+    "predict-stage3": 23.784829600001103,
+    "predict": 2.3773400000063702,
+    "train-stage3": 18.97793630000524,
+    "train": 19.34706880000158,
+    "translit": 2.210830600000918
+  }
 }
