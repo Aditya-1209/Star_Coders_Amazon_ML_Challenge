@@ -31,7 +31,10 @@ def learn(dataset: Path, min_count: int = 2, min_share: float = 0.5) -> dict[str
     rd = lambda f: pl.read_csv(d / f, separator="\t", quote_char=None, infer_schema=False)
     gt = rd("train_ground_truth.tsv").with_columns(pl.col("matched_entity_ids").str.split(","))
     gt = gt.explode("matched_entity_ids").drop_nulls()
-    s1 = rd("train_source1.tsv").select("entity_id", n1="business_name")
+    # Learn only from training folds (0-2): the tuning/holdout folds 3-4 stay unseen.
+    from .train import fold_expr
+    s1 = rd("train_source1.tsv").with_row_index("sidx").with_columns(pl.col("sidx").cast(pl.UInt32))
+    s1 = s1.filter(~fold_expr().is_in([3, 4])).select("entity_id", n1="business_name")
     tg = pl.concat([rd("train_source2.tsv"), rd("train_source3.tsv")]).select("entity_id", n2="business_name")
     tg = tg.filter(~pl.col("n2").str.contains(r"^[\x00-\x7FÀ-ɏ]*$"))
     pairs = gt.join(tg, left_on="matched_entity_ids", right_on="entity_id").join(

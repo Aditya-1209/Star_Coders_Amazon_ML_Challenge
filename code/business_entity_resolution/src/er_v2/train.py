@@ -5,7 +5,7 @@ stage-1 scores: how the pair ranks among its Source 1 record's candidates and
 among all Source 1 records competing for the same Source 2/3 target (every
 target belongs to at most one business). Folds are assigned by Source 1 id.
   folds 0/1 : stage-1 models (each predicts the other fold + everything else)
-  fold  2   : stage-2 training      fold 3 : threshold tuning
+  folds 2/5 : stage-2 training      fold 3 : threshold tuning
   fold  4   : untouched holdout for the reported score
 """
 from __future__ import annotations
@@ -23,6 +23,7 @@ from .features import feature_names
 from .metrics import macro_f05
 
 N_FOLDS = 10
+PRUNE = 0.001  # stage-1 floor that defines the final candidate set (see predict.py)
 PARAMS = dict(objective="binary:logistic", eval_metric="logloss", tree_method="hist",
               device="cuda", eta=0.08, max_depth=10, min_child_weight=5, subsample=0.8,
               colsample_bytree=0.8, reg_lambda=1.0, max_bin=256, seed=42)
@@ -136,21 +137,26 @@ def main() -> None:
 
     ctx_cols = [c for c in ctx.columns if c not in ("sidx", "tidx")]
     f2 = f1 + ctx_cols
-    ctx = ctx.filter(fold_expr().is_in([2, 3, 4]))
-    tr = load_feats(folder, [2]).join(ctx, on=["sidx", "tidx"], how="left")
+    ctx_full = ctx.filter(pl.col("p1") >= PRUNE)
+    ctx = ctx.filter(fold_expr().is_in([2, 3, 4, 5]))
+    tr = load_feats(folder, [2, 5]).join(ctx, on=["sidx", "tidx"], how="left")
     va = load_feats(folder, [3]).sample(2_000_000, seed=2).join(ctx, on=["sidx", "tidx"], how="left")
     m2 = fit(tr, f2, va, args.rounds)
     del tr, va
     m2.save_model(str(mdir / "stage2.json"))
     print(f"stage2 trained ({m2.best_iteration} it), {time.time() - t:.0f}s", flush=True)
 
-    ev = []
+    # stage-2 scores for every pruned pair of every fold (stage 3 builds on them)
+    allp = []
     for p in sorted(folder.glob("part_*.parquet")):
-        held = pl.read_parquet(p).with_columns(fold_expr()).filter(pl.col("fold") >= 3)
-        held = held.join(ctx, on=["sidx", "tidx"], how="left")
-        ev.append(held.select("sidx", "tidx", "fold", "p1", "label").with_columns(
-            p2=pl.Series(predict(m2, X(held, f2)).astype(np.float32))))
-    ev = pl.concat(ev)
+        part = pl.read_parquet(p).with_columns(fold_expr())
+        part = part.join(ctx_full, on=["sidx", "tidx"], how="inner").filter(pl.col("p1") >= PRUNE)
+        allp.append(part.select("sidx", "tidx", "fold", "p1", "label").with_columns(
+            p2=pl.Series(predict(m2, X(part, f2)).astype(np.float32))))
+    allp = pl.concat(allp)
+    allp.write_parquet(work / "stage2_train.parquet")
+    del ctx_full
+    ev = allp.filter(pl.col("fold").is_in([3, 4]))
     del ctx
     ev.write_parquet(work / "eval_preds.parquet")
 
@@ -178,6 +184,10 @@ def main() -> None:
         results[f"fold{fold}_stage1_excl"] = macro_f05(decide(e, thr, "p1"), tr_, a)
         results[f"fold{fold}_oracle"] = macro_f05(e.join(tr_, on=["sidx", "tidx"]), tr_, a)
     results["threshold"] = thr
+    results["prune"] = PRUNE
+    for fold in (3, 4):
+        results[f"fold{fold}_mean_candidates"] = len(ev.filter(pl.col("fold") == fold)) / len(
+            anchors.filter(pl.col("fold") == fold))
     results["stage1_features"] = f1
     results["stage2_features"] = f2
     results["best_iterations"] = {"stage1": m0.best_iteration, "stage2": m2.best_iteration}

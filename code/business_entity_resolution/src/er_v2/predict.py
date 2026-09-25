@@ -1,5 +1,10 @@
 """Stage 5: score test candidates with the two-stage model and write outputs.
 
+Candidate generation is a cascade: key blocking (top 64) followed by the
+stage-1 model acting as a learned candidate ranker; pairs with p1 below
+``prune`` are discarded. The surviving pairs (~5 per Source 1) are the final
+candidate set: exactly the pairs the stage-2 matcher runs inference over.
+
 Writes, in Source 1 file order and with one row per Source 1 record:
   output/matching_results.tsv   final matches
   output/candidate_pairs.tsv    the exact candidate set scored by the model
@@ -33,11 +38,14 @@ def main() -> None:
     ap.add_argument("--model-dir", default="models/v2")
     ap.add_argument("--output", default="output")
     ap.add_argument("--threshold", type=float, default=None)
+    ap.add_argument("--prune", type=float, default=None, help="stage-1 score floor for candidates")
+    ap.add_argument("--feats", default=None, help="test feature folder (default work/feats_test)")
     args = ap.parse_args()
     work, mdir, out = Path(args.work), Path(args.model_dir), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
     meta = json.loads((mdir / "metrics.json").read_text())
     thr = args.threshold if args.threshold is not None else meta["threshold"]
+    prune = args.prune if args.prune is not None else meta.get("prune", 0.001)
     f1, f2 = meta["stage1_features"], meta["stage2_features"]
     m1 = xgb.Booster(model_file=str(mdir / "stage1.json"))
     m2 = xgb.Booster(model_file=str(mdir / "stage2.json"))
@@ -45,7 +53,7 @@ def main() -> None:
     m2.set_param({"device": "cuda"})
     t = time.time()
 
-    parts = sorted((work / "feats_test").glob("part_*.parquet"))
+    parts = sorted(Path(args.feats or work / "feats_test").glob("part_*.parquet"))
     scores = []
     for p in parts:
         df = pl.read_parquet(p)
@@ -59,11 +67,12 @@ def main() -> None:
     preds = []
     for p in parts:
         df = pl.read_parquet(p).join(ctx, on=["sidx", "tidx"], how="left", maintain_order="left")
-        preds.append(df.select("sidx", "tidx").with_columns(
+        df = df.filter(pl.col("p1") >= prune)
+        preds.append(df.select("sidx", "tidx", "p1").with_columns(
             p2=pl.Series(predict(m2, X(df, f2)).astype(np.float32))))
     preds = pl.concat(preds)
     preds.write_parquet(work / "test_preds.parquet")
-    print(f"stage2 done, {time.time() - t:.0f}s", flush=True)
+    print(f"stage2 done on {len(preds):,} pruned candidates (p1>={prune}), {time.time() - t:.0f}s", flush=True)
 
     norm = work / "norm"
     s1 = pl.read_parquet(norm / "test_source1.parquet", columns=["idx", "entity_id"])
