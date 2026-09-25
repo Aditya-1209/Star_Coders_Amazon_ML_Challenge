@@ -1,8 +1,12 @@
 # Star Coders: Business Entity Resolution (v2 pipeline)
 
+For the r4 branch, follow `docs/README_r4.md` from the repository root. Stage 3
+requires retraining after r4's missing-address support fix; old stage-3 models
+are rejected. No new accuracy or performance measurements are claimed for r4.
+
 Matches every test Source 1 business to its Source 2 / Source 3 records using
 only the challenge data. Pipeline: text normalization, then weighted
-inverted-key blocking (top 64 candidates per business), then 50 string and
+inverted-key blocking (top 64 candidates per business), then 43 string and
 context features, then a two-stage gradient-boosted classifier (XGBoost),
 then threshold selection and one-owner-per-target assignment.
 
@@ -13,11 +17,11 @@ boosted-tree classifier trained from scratch on the provided labels.
 ## Environment
 
 * Python 3.12 (tested on Windows 11 native; Linux works identically)
-* `pip install -r requirements.txt`
+* From the repository root: `python -m pip install -r code/business_entity_resolution/requirements_v2.txt`
 * Hardware used: i9-13900K (32 threads), 32 GB RAM, RTX 3060 12 GB.
   Peak RAM is about 22 GB during feature generation. The GPU is used for
-  XGBoost training and inference; set `device="cpu"` in `train.py:PARAMS`
-  and `predict.py` if no CUDA GPU is available.
+  XGBoost training and inference. In r4, pass `--device cpu` to `er_v2.train`,
+  `er_v2.predict`, and `er_v2.stage3` when CUDA is unavailable. No code edits needed.
 
 ## Layout expected
 

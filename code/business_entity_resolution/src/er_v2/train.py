@@ -21,6 +21,8 @@ import polars as pl
 
 from .features import feature_names
 from .metrics import macro_f05
+from .decision import best_per_target
+from .runtime import feature_parts, positive_int
 
 N_FOLDS = 10
 PRUNE = 0.001  # stage-1 floor that defines the final candidate set (see predict.py)
@@ -31,9 +33,28 @@ PARAMS = dict(objective="binary:logistic", eval_metric="logloss", tree_method="h
 
 def predict(model: xgb.Booster, x) -> np.ndarray:
     """Predict with the best iteration; runs on the GPU when available."""
+    if x.shape[0] == 0:
+        return np.empty(0, dtype=np.float32)
     it = getattr(model, "best_iteration", None)
     rng = (0, it + 1) if it is not None else (0, 0)
     return model.inplace_predict(x, iteration_range=rng)
+
+
+def predict_frame(model: xgb.Booster, df: pl.DataFrame, feats: list[str], batch_rows: int = 250_000) -> np.ndarray:
+    """Bound dense feature matrices instead of converting an entire shard at once."""
+    if batch_rows < 1:
+        raise ValueError("batch_rows must be positive")
+    output = np.empty(len(df), dtype=np.float32)
+    for start in range(0, len(df), batch_rows):
+        batch = df.slice(start, batch_rows)
+        output[start:start + len(batch)] = predict(model, X(batch, feats))
+    return output
+
+
+def validation_sample(df: pl.DataFrame, seed: int, limit: int = 2_000_000) -> pl.DataFrame:
+    if df.is_empty():
+        raise ValueError("Validation fold has no candidate pairs; use a larger training sample")
+    return df.sample(min(limit, len(df)), seed=seed)
 
 
 def fold_expr() -> pl.Expr:
@@ -42,7 +63,7 @@ def fold_expr() -> pl.Expr:
 
 def load_feats(folder: Path, folds: list[int] | None = None, columns=None) -> pl.DataFrame:
     parts = []
-    for p in sorted(folder.glob("part_*.parquet")):
+    for p in feature_parts(folder):
         df = pl.read_parquet(p, columns=columns)
         if folds is not None:
             df = df.filter(fold_expr().is_in(folds))
@@ -54,34 +75,40 @@ def X(df: pl.DataFrame, feats: list[str]):
     return df.select(pl.col(feats).cast(pl.Float32)).to_numpy()
 
 
-def fit(df: pl.DataFrame, feats: list[str], valid: pl.DataFrame | None, rounds: int) -> xgb.Booster:
+def fit(df: pl.DataFrame, feats: list[str], valid: pl.DataFrame | None, rounds: int,
+        params: dict | None = None) -> xgb.Booster:
+    if df.is_empty() or df["label"].n_unique() < 2:
+        raise ValueError("Training fold must contain positive and negative candidate pairs")
     dtrain = xgb.QuantileDMatrix(X(df, feats), df["label"].to_numpy(), feature_names=feats)
     evals = [(dtrain, "train")]
     kw = {}
     if valid is not None:
+        if valid.is_empty():
+            raise ValueError("Validation fold has no candidate pairs")
         evals.append((xgb.QuantileDMatrix(X(valid, feats), valid["label"].to_numpy(),
                                           feature_names=feats, ref=dtrain), "valid"))
         kw["early_stopping_rounds"] = 50
-    return xgb.train(PARAMS, dtrain, rounds, evals=evals, verbose_eval=100, **kw)
+    return xgb.train(PARAMS if params is None else params, dtrain, rounds, evals=evals, verbose_eval=100, **kw)
 
 
-def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: xgb.Booster, feats) -> pl.DataFrame:
+def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: xgb.Booster, feats,
+                  batch_rows: int = 250_000) -> pl.DataFrame:
     """Out-of-fold stage-1 probability for every pair in the folder."""
     out = []
-    for p in sorted(folder.glob("part_*.parquet")):
+    for p in feature_parts(folder):
         df = pl.read_parquet(p).with_columns(fold_expr())
-        x = X(df, feats)
-        pred = predict(default, x)
+        pred = predict_frame(default, df, feats, batch_rows)
         for fold, model in models.items():
             mask = (df["fold"] == fold).to_numpy()
             if mask.any():
-                pred[mask] = predict(model, x[mask])
+                pred[mask] = predict_frame(model, df.filter(pl.col("fold") == fold), feats, batch_rows)
         out.append(df.select("sidx", "tidx").with_columns(p1=pl.Series(pred.astype(np.float32))))
     return pl.concat(out)
 
 
 def context_features(scores: pl.DataFrame) -> pl.DataFrame:
     """Stage-2 context from stage-1 scores; target competition is global."""
+    scores = scores.sort(["p1", "sidx", "tidx"], descending=[True, False, False])
     s = scores.with_columns(
         s_rank=pl.col("p1").rank("ordinal", descending=True).over("sidx").cast(pl.UInt16),
         s_max=pl.col("p1").max().over("sidx"),
@@ -97,40 +124,46 @@ def context_features(scores: pl.DataFrame) -> pl.DataFrame:
         t_other=pl.when(pl.col("t_prank") == 1).then(
             pl.when(pl.col("t_cnt") > 1).then(pl.col("t_second")).otherwise(0.0))
         .otherwise(pl.col("t_max")),
-        s_rel=pl.col("p1") / pl.col("s_max"),
+        s_rel=pl.when(pl.col("s_max") > 0).then(pl.col("p1") / pl.col("s_max")).otherwise(0.0),
     ).drop("t_second", "t_cnt")
 
 
 def decide(pred: pl.DataFrame, threshold: float, score: str = "p2") -> pl.DataFrame:
     """Threshold, then give each target only to its best-scoring Source 1."""
     kept = pred.filter(pl.col(score) >= threshold)
-    return kept.filter(pl.col(score) == pl.col(score).max().over("tidx")).unique("tidx", keep="first")
+    return best_per_target(kept, score)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", default="work")
     ap.add_argument("--model-dir", default="models/v2")
-    ap.add_argument("--rounds", type=int, default=1500)
+    ap.add_argument("--dataset", default="student_resource/dataset")
+    ap.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
+    ap.add_argument("--threads", type=positive_int, default=12)
+    ap.add_argument("--batch-rows", type=positive_int, default=250_000)
+    ap.add_argument("--rounds", type=positive_int, default=1500)
     args = ap.parse_args()
     work, mdir = Path(args.work), Path(args.model_dir)
     mdir.mkdir(parents=True, exist_ok=True)
     folder = work / "feats_train"
+    params = {**PARAMS, "device": args.device, "nthread": args.threads}
     t = time.time()
 
-    sample = pl.read_parquet(next(folder.glob("part_*.parquet")), n_rows=1)
+    sample = pl.read_parquet(feature_parts(folder)[0], n_rows=1)
     f1 = feature_names(sample)
     base = load_feats(folder, [0, 1]).with_columns(fold_expr())
     print(f"stage1 data {len(base):,} pairs, {time.time() - t:.0f}s", flush=True)
     m0 = fit(base.filter(pl.col("fold") == 0), f1,
-             base.filter(pl.col("fold") == 1).sample(2_000_000, seed=1), args.rounds)
+             validation_sample(base.filter(pl.col("fold") == 1), seed=1), args.rounds, params)
+    first_rounds = m0.best_iteration + 1 if m0.best_iteration is not None else args.rounds
     m1 = fit(base.filter(pl.col("fold") == 1), f1,
-             base.filter(pl.col("fold") == 0).sample(2_000_000, seed=1), (m0.best_iteration or args.rounds) + 1)
+             validation_sample(base.filter(pl.col("fold") == 0), seed=1), first_rounds, params)
     del base
     m0.save_model(str(mdir / "stage1.json"))
     print(f"stage1 trained ({m0.best_iteration} it), {time.time() - t:.0f}s", flush=True)
 
-    scores = stage1_scores(folder, {0: m1, 1: m0}, m0, f1)
+    scores = stage1_scores(folder, {0: m1, 1: m0}, m0, f1, args.batch_rows)
     ctx = context_features(scores)
     del scores
     print(f"stage1 scored + context, {time.time() - t:.0f}s", flush=True)
@@ -140,19 +173,19 @@ def main() -> None:
     ctx_full = ctx.filter(pl.col("p1") >= PRUNE)
     ctx = ctx.filter(fold_expr().is_in([2, 3, 4, 5]))
     tr = load_feats(folder, [2, 5]).join(ctx, on=["sidx", "tidx"], how="left")
-    va = load_feats(folder, [3]).sample(2_000_000, seed=2).join(ctx, on=["sidx", "tidx"], how="left")
-    m2 = fit(tr, f2, va, args.rounds)
+    va = validation_sample(load_feats(folder, [3]), seed=2).join(ctx, on=["sidx", "tidx"], how="left")
+    m2 = fit(tr, f2, va, args.rounds, params)
     del tr, va
     m2.save_model(str(mdir / "stage2.json"))
     print(f"stage2 trained ({m2.best_iteration} it), {time.time() - t:.0f}s", flush=True)
 
     # stage-2 scores for every pruned pair of every fold (stage 3 builds on them)
     allp = []
-    for p in sorted(folder.glob("part_*.parquet")):
+    for p in feature_parts(folder):
         part = pl.read_parquet(p).with_columns(fold_expr())
         part = part.join(ctx_full, on=["sidx", "tidx"], how="inner").filter(pl.col("p1") >= PRUNE)
         allp.append(part.select("sidx", "tidx", "fold", "p1", "label").with_columns(
-            p2=pl.Series(predict(m2, X(part, f2)).astype(np.float32))))
+            p2=pl.Series(predict_frame(m2, part, f2, args.batch_rows))))
     allp = pl.concat(allp)
     allp.write_parquet(work / "stage2_train.parquet")
     del ctx_full
@@ -164,7 +197,7 @@ def main() -> None:
     from .run_block import load_split
     from .run_features import ground_truth_pairs
     s1, tg = load_split(work, "train")
-    truth = ground_truth_pairs(Path("student_resource/dataset"), s1, tg).with_columns(fold_expr())
+    truth = ground_truth_pairs(Path(args.dataset), s1, tg).with_columns(fold_expr())
     anchors = s1.select(sidx=pl.col("idx").cast(pl.UInt32)).with_columns(fold_expr())
 
     results = {}
@@ -185,6 +218,9 @@ def main() -> None:
         results[f"fold{fold}_oracle"] = macro_f05(e.join(tr_, on=["sidx", "tidx"]), tr_, a)
     results["threshold"] = thr
     results["prune"] = PRUNE
+    results["runtime"] = {"device": args.device, "threads": args.threads, "batch_rows": args.batch_rows}
+    results["stage2_training_folds"] = [2, 5]
+    results["stage3_eligible_folds"] = [3, 4, 6, 7]
     for fold in (3, 4):
         results[f"fold{fold}_mean_candidates"] = len(ev.filter(pl.col("fold") == fold)) / len(
             anchors.filter(pl.col("fold") == fold))

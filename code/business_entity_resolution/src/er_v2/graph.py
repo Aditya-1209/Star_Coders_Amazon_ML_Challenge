@@ -21,39 +21,55 @@ import polars as pl
 from rapidfuzz import fuzz, process
 
 from .block import generate
+from .decision import best_per_target
 
 ANCHOR = 0.5
 HOP_K = 10
+HOP_SCHEMA = {"sidx": pl.UInt32, "tidx": pl.UInt32, "hop_score": pl.Float32,
+              "hop_rank": pl.UInt16, "hop_n": pl.UInt16, "hop_pa": pl.Float32}
+SUPPORT_SCHEMA = {"sidx": pl.UInt32, "tidx": pl.UInt32, "n_anchor": pl.UInt16,
+                  **{name: pl.Float32 for name in (
+                      "sup_both_max", "sup_both_w", "sup_max_max", "sup_name_tset", "sup_name_ratio",
+                      "sup_cc_partial", "sup_addr_tset", "sup_addr_ratio")},
+                  "sup_addr_valid": pl.Int8, "sup_n90": pl.UInt16, "sup_nboth80": pl.UInt16,
+                  "pa_max": pl.Float32}
 
 
 def anchors_of(stage2: pl.DataFrame) -> pl.DataFrame:
     """Confident matches after exclusivity: (sidx, a, pa)."""
     a = stage2.filter(pl.col("p2") >= ANCHOR)
-    a = a.filter(pl.col("p2") == pl.col("p2").max().over("tidx")).unique("tidx", keep="first")
+    a = best_per_target(a, "p2")
     return a.select("sidx", a="tidx", pa="p2")
 
 
 def expand(anchors: pl.DataFrame, tkeys: pl.DataFrame, tindex: pl.DataFrame) -> pl.DataFrame:
     """Two-hop candidates: (sidx, tidx, hop_score, hop_rank, hop_n)."""
+    if anchors.is_empty() or tindex.is_empty():
+        return pl.DataFrame(schema=HOP_SCHEMA)
     ak = tkeys.join(anchors.select(idx="a").unique(), on="idx", how="semi")
     nb = generate(ak, tindex, top_k=HOP_K + 1, verbose=False)
     nb = nb.rename({"sidx": "a", "tidx": "t"}).filter(pl.col("a") != pl.col("t"))
+    # If the source record was absent from its own hits, HOP_K+1 still needs trimming.
+    nb = nb.filter(pl.col("brank").rank("ordinal").over("a") <= HOP_K)
     x = anchors.join(nb, on="a")
     return x.group_by("sidx", "t").agg(
         hop_score=pl.col("bscore").max(),
         hop_rank=pl.col("brank").min().cast(pl.UInt16),
         hop_n=pl.len().cast(pl.UInt16),
         hop_pa=pl.col("pa").max(),
-    ).rename({"t": "tidx"})
+    ).rename({"t": "tidx"}).cast(HOP_SCHEMA)
 
 
-def support_features(pairs: pl.DataFrame, anchors: pl.DataFrame, right: pl.DataFrame) -> pl.DataFrame:
+def support_features(pairs: pl.DataFrame, anchors: pl.DataFrame, right: pl.DataFrame,
+                     workers: int = -1) -> pl.DataFrame:
     """Similarity of each candidate to the other anchors of its business.
 
     ``right`` holds per-target text columns (idx, core_r, addr_r, cc_r) as
     produced by features.record_frames.
     """
     x = pairs.select("sidx", "tidx").join(anchors, on="sidx").filter(pl.col("a") != pl.col("tidx"))
+    if x.is_empty():
+        return pl.DataFrame(schema=SUPPORT_SCHEMA)
     txt = right.select("idx", "core_r", "addr_r", "cc_r")
     x = x.join(txt, left_on="tidx", right_on="idx", how="left")
     x = x.join(txt.rename({"core_r": "core_a", "addr_r": "addr_a", "cc_r": "cc_a"}),
@@ -66,8 +82,12 @@ def support_features(pairs: pl.DataFrame, anchors: pl.DataFrame, right: pl.DataF
         "sup_addr_tset": ("addr_r", "addr_a", fuzz.token_set_ratio),
         "sup_addr_ratio": ("addr_r", "addr_a", fuzz.ratio),
     }.items():
-        sims[name] = process.cpdist(x[l].to_list(), x[r].to_list(), scorer=scorer, workers=-1,
-                                    dtype=np.float32)
+        values = process.cpdist(x[l].to_list(), x[r].to_list(), scorer=scorer, workers=workers,
+                                dtype=np.float32)
+        # Empty strings are missing evidence, even when a scorer calls two blanks equal.
+        present = ((x[l].fill_null("") != "") & (x[r].fill_null("") != "")).to_numpy()
+        values[~present] = 0.0
+        sims[name] = values
     x = x.select("sidx", "tidx", "pa", "addr_r", "addr_a").with_columns(**{k: pl.Series(v) for k, v in sims.items()})
     x = x.with_columns(
         sup_both=pl.min_horizontal(pl.col("sup_name_tset"), pl.col("sup_addr_tset"))
@@ -89,4 +109,4 @@ def support_features(pairs: pl.DataFrame, anchors: pl.DataFrame, right: pl.DataF
         sup_n90=((pl.col("sup_max") >= 90)).sum().cast(pl.UInt16),
         sup_nboth80=((pl.col("sup_both") >= 80)).sum().cast(pl.UInt16),
         pa_max=pl.col("pa").max(),
-    )
+    ).cast(SUPPORT_SCHEMA).select(list(SUPPORT_SCHEMA))

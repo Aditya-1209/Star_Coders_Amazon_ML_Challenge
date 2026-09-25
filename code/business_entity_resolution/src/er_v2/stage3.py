@@ -1,6 +1,6 @@
 """Stage 3 driver: two-hop expansion + support features + final model.
 
-train mode : uses work/stage2_train.parquet (out-of-fold stage-2 scores),
+train mode : uses work/stage2_train.parquet (scores on folds unseen by stage-2 fitting),
              trains on folds 6/7, tunes the threshold on fold 3, reports fold 4.
 test mode  : uses work/test_preds.parquet, writes the final TSVs.
 """
@@ -21,13 +21,15 @@ from .features import compute, pair_frame, record_frames
 from .graph import anchors_of, expand, support_features
 from .metrics import macro_f05
 from .run_block import load_split
-from .train import PARAMS, X, decide, fold_expr, predict
+from .runtime import feature_parts, positive_int
+from .train import PARAMS, decide, fit, fold_expr, predict_frame
 
 TRAIN_FOLDS, TUNE_FOLD, HOLD_FOLD = [6, 7], 3, 4
 BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc", "s_nc"]
 
 
-def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log) -> pl.DataFrame:
+def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
+          batch_rows: int = 250_000, support_anchors: int = 5_000, workers: int = 12) -> pl.DataFrame:
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
     s1, tg = load_split(work, split)
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
@@ -36,12 +38,16 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log) ->
     anchors = anchors_of(stage2)
     log(f"anchors {len(anchors):,}")
 
-    tkeys = make_keys(tg)
-    tindex = build_target_index(tkeys, len(tg))
-    tkeys = tkeys.drop("kind")
-    gc.collect()
-    hop = expand(anchors, tkeys, tindex)
-    del tkeys, tindex
+    if anchors.is_empty():
+        from .graph import HOP_SCHEMA
+        hop = pl.DataFrame(schema=HOP_SCHEMA)
+    else:
+        tkeys = make_keys(tg)
+        tindex = build_target_index(tkeys, len(tg))
+        tkeys = tkeys.drop("kind")
+        gc.collect()
+        hop = expand(anchors, tkeys, tindex)
+        del tkeys, tindex
     gc.collect()
     log(f"two-hop pairs {len(hop):,}")
 
@@ -53,27 +59,31 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log) ->
     # pairwise features: reuse stored ones for direct pairs, compute for new pairs
     keyset = pairs.select("sidx", "tidx")
     old = []
-    for p in sorted(feats_dir.glob("part_*.parquet")):
-        old.append(pl.read_parquet(p).join(keyset, on=["sidx", "tidx"], how="semi"))
+    for p in feature_parts(feats_dir):
+        old.append(pl.scan_parquet(p).join(keyset.lazy(), on=["sidx", "tidx"], how="semi")
+                   .collect(engine="streaming"))
     old = pl.concat(old)
     if "label" in old.columns:
         old = old.drop("label")
     new_pairs = keyset.join(old.select("sidx", "tidx"), on=["sidx", "tidx"], how="anti")
     left, right = record_frames(s1, tg)
-    newf = new_pairs.with_columns(*[pl.lit(None, pl.Float32).alias(c) for c in BLOCK_COLS])
-    newf = compute(pair_frame(newf, left, right, n_s2))
+    new_parts = []
+    for batch in new_pairs.iter_slices(batch_rows):
+        batch = batch.with_columns(*[pl.lit(None, pl.Float32).alias(c) for c in BLOCK_COLS])
+        new_parts.append(compute(pair_frame(batch, left, right, n_s2), workers=workers).select(old.columns))
+    newf = pl.concat(new_parts) if new_parts else old.head(0)
     log(f"computed features for {len(newf):,} new pairs")
     base = pl.concat([old, newf.select(old.columns)], how="vertical_relaxed")
-    del old, newf, left
+    del old, newf, new_parts, new_pairs, left, s1, tg
     gc.collect()
 
     txt = right.select("idx", "core_r", "addr_r", "cc_r")
     ids = pairs["sidx"].unique().sort()
     sup = []
-    for i in range(0, len(ids), 300_000):
-        chunk = pairs.join(pl.DataFrame({"sidx": ids[i:i + 300_000]}), on="sidx", how="semi")
-        sup.append(support_features(chunk, anchors, txt))
-    sup = pl.concat(sup)
+    for i in range(0, len(ids), support_anchors):
+        chunk = pairs.join(pl.DataFrame({"sidx": ids[i:i + support_anchors]}), on="sidx", how="semi")
+        sup.append(support_features(chunk, anchors, txt, workers=workers))
+    sup = pl.concat(sup) if sup else support_features(pairs, anchors, txt, workers=workers)
     del right
     gc.collect()
     out = base.join(pairs, on=["sidx", "tidx"], how="left").join(sup, on=["sidx", "tidx"], how="left")
@@ -91,36 +101,41 @@ def main() -> None:
     ap.add_argument("--split", required=True, choices=["train", "test"])
     ap.add_argument("--model-dir", default="models/v2")
     ap.add_argument("--output", default="output")
-    ap.add_argument("--rounds", type=int, default=2000)
+    ap.add_argument("--dataset", default="student_resource/dataset")
+    ap.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
+    ap.add_argument("--threads", type=positive_int, default=12)
+    ap.add_argument("--batch-rows", type=positive_int, default=250_000)
+    ap.add_argument("--support-anchors", type=positive_int, default=5_000)
+    ap.add_argument("--rounds", type=positive_int, default=2000)
     args = ap.parse_args()
     work, mdir = Path(args.work), Path(args.model_dir)
     t = time.time()
     log = lambda m: print(f"[{time.time() - t:6.0f}s] {m}", flush=True)
+    build_options = {"batch_rows": args.batch_rows, "support_anchors": args.support_anchors,
+                     "workers": args.threads}
 
     if args.split == "train":
         from .run_features import ground_truth_pairs
         st2 = pl.read_parquet(work / "stage2_train.parquet").with_columns(fold_expr())
         keep = TRAIN_FOLDS + [TUNE_FOLD, HOLD_FOLD]
         st2 = st2.filter(pl.col("fold").is_in(keep)).drop("label", "fold")
-        df = build("train", work, st2, work / "feats_train", log)
+        df = build("train", work, st2, work / "feats_train", log, **build_options)
         s1, tg = load_split(work, "train")
-        truth = ground_truth_pairs(Path("student_resource/dataset"), s1, tg)
+        truth = ground_truth_pairs(Path(args.dataset), s1, tg)
         df = df.join(truth.with_columns(label=pl.lit(1, pl.Int8)), on=["sidx", "tidx"], how="left")
         df = df.with_columns(pl.col("label").fill_null(0), fold_expr())
         df.write_parquet(work / "stage3_train.parquet")
         feats = feature_cols(df)
         tr = df.filter(pl.col("fold").is_in(TRAIN_FOLDS))
         va = df.filter(pl.col("fold") == TUNE_FOLD)
-        dtr = xgb.QuantileDMatrix(X(tr, feats), tr["label"].to_numpy(), feature_names=feats)
-        dva = xgb.QuantileDMatrix(X(va, feats), va["label"].to_numpy(), feature_names=feats, ref=dtr)
-        m3 = xgb.train(PARAMS, dtr, args.rounds, evals=[(dva, "valid")], early_stopping_rounds=50,
-                       verbose_eval=200)
+        m3 = fit(tr, feats, va, args.rounds, {**PARAMS, "device": args.device, "nthread": args.threads})
+        del tr, va
         mdir.mkdir(parents=True, exist_ok=True)
         m3.save_model(str(mdir / "stage3.json"))
         log(f"stage3 trained ({m3.best_iteration} it)")
         ev = df.filter(pl.col("fold").is_in([TUNE_FOLD, HOLD_FOLD]))
         ev = ev.select("sidx", "tidx", "fold", "p2", "direct").with_columns(
-            p3=pl.Series(predict(m3, X(ev, feats)).astype(np.float32)))
+            p3=pl.Series(predict_frame(m3, ev, feats, args.batch_rows)))
         truth = truth.with_columns(fold_expr())
         anchors = s1.select(sidx=pl.col("idx").cast(pl.UInt32)).with_columns(fold_expr())
         best = (0.0, 0.5)
@@ -131,19 +146,21 @@ def main() -> None:
             r = macro_f05(decide(tune, thr, "p3"), t3, a3)["macro_f05"]
             best = max(best, (r, float(thr)))
         thr = best[1]
-        res = {"threshold": thr, "features": feats, "best_iteration": m3.best_iteration}
+        res = {"threshold": thr, "features": feats, "best_iteration": m3.best_iteration,
+               "feature_version": "r4", "runtime": {"device": args.device, "threads": args.threads,
+               "batch_rows": args.batch_rows, "support_anchors": args.support_anchors}}
         for fold in (TUNE_FOLD, HOLD_FOLD):
             e = ev.filter(pl.col("fold") == fold)
             a = anchors.filter(pl.col("fold") == fold)["sidx"]
             tr_ = truth.filter(pl.col("fold") == fold)
             res[f"fold{fold}_stage3"] = macro_f05(decide(e, thr, "p3"), tr_, a)
             res[f"fold{fold}_stage2_ref"] = macro_f05(
-                decide(e.filter(pl.col("p2").is_not_null()), meta_thr(work), "p2"), tr_, a)
+                decide(e.filter(pl.col("p2").is_not_null()), meta_thr(mdir), "p2"), tr_, a)
             res[f"fold{fold}_oracle"] = macro_f05(e.join(tr_, on=["sidx", "tidx"]), tr_, a)
             res[f"fold{fold}_mean_candidates"] = len(e) / len(a)
         (mdir / "stage3_metrics.json").write_text(json.dumps(res, indent=2))
         for k, v in res.items():
-            if isinstance(v, dict):
+            if isinstance(v, dict) and "macro_f05" in v:
                 print(f"{k:22s} F0.5={v['macro_f05']:.4f} P={v['pair_precision']:.4f} R={v['pair_recall']:.4f}")
             elif k != "features":
                 print(k, v)
@@ -152,12 +169,14 @@ def main() -> None:
     # test
     from .predict import write_lists
     meta = json.loads((mdir / "stage3_metrics.json").read_text())
+    if meta.get("feature_version") != "r4":
+        raise ValueError("Stage-3 graph features changed in r4; retrain er_v2.stage3 --split train first")
     st2 = pl.read_parquet(work / "test_preds.parquet")
-    df = build("test", work, st2, work / "feats_test", log)
+    df = build("test", work, st2, work / "feats_test", log, **build_options)
     m3 = xgb.Booster(model_file=str(mdir / "stage3.json"))
-    m3.set_param({"device": "cuda"})
+    m3.set_param({"device": args.device, "nthread": args.threads})
     preds = df.select("sidx", "tidx").with_columns(
-        p3=pl.Series(predict(m3, X(df, meta["features"])).astype(np.float32)))
+        p3=pl.Series(predict_frame(m3, df, meta["features"], args.batch_rows)))
     preds.write_parquet(work / "test_preds_stage3.parquet")
     matches = decide(preds, meta["threshold"], "p3")
     out = Path(args.output)
@@ -173,12 +192,12 @@ def main() -> None:
     log(f"{len(matches):,} matches, {len(preds) / len(s1):.2f} candidates per source1")
 
 
-def meta_thr(work: Path) -> float:
-    for d in ("work/model_r2", "models/v2"):
-        p = Path(d) / "metrics.json"
-        if p.exists():
-            return json.loads(p.read_text())["threshold"]
-    return 0.675
+def meta_thr(model_dir: Path) -> float:
+    """Use the same model directory as the run; never guess a threshold."""
+    value = json.loads((model_dir / "metrics.json").read_text(encoding="utf-8"))["threshold"]
+    if not 0 <= value <= 1:
+        raise ValueError(f"Invalid stage-2 threshold in {model_dir / 'metrics.json'}")
+    return float(value)
 
 
 if __name__ == "__main__":

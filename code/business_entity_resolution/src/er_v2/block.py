@@ -17,6 +17,8 @@ import time
 import polars as pl
 
 CAPS = {"n": 2000, "c": 500, "p": 500, "a": 2000, "w": 2000, "q": 500}
+PAIR_SCHEMA = {"sidx": pl.UInt32, "tidx": pl.UInt32, "bscore": pl.Float32,
+               "nkeys": pl.UInt32, "brank": pl.UInt32}
 
 
 def _tok(col: str, alias: str) -> pl.Expr:
@@ -57,6 +59,8 @@ def make_keys(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def build_target_index(tkeys: pl.DataFrame, n_targets: int, caps=CAPS) -> pl.DataFrame:
+    if n_targets < 1:
+        raise ValueError("The target corpus must contain at least one record")
     df = tkeys.group_by("key", "kind").agg(pl.len().alias("df"))
     cap = pl.col("kind").replace_strict(caps, return_dtype=pl.UInt32)
     df = df.filter(pl.col("df") <= cap)
@@ -68,6 +72,8 @@ def build_target_index(tkeys: pl.DataFrame, n_targets: int, caps=CAPS) -> pl.Dat
 def generate(skeys: pl.DataFrame, tindex: pl.DataFrame, top_k: int = 50,
              chunk: int = 100_000, verbose: bool = True) -> pl.DataFrame:
     """Return (sidx, tidx, bscore, nkeys, brank) for the top-K targets per source1."""
+    if top_k < 1 or chunk < 1:
+        raise ValueError("top_k and chunk must be positive")
     keyset = tindex.select("key", "w").unique("key")
     sk = skeys.join(keyset, on="key", how="inner").select("idx", "key")
     ids = sk["idx"].unique().sort()
@@ -78,11 +84,12 @@ def generate(skeys: pl.DataFrame, tindex: pl.DataFrame, top_k: int = 50,
         part = sk.filter(pl.col("idx").is_between(lo, hi))
         j = part.join(tindex, on="key", how="inner", suffix="_t")
         g = j.group_by("idx", "idx_t").agg(bscore=pl.col("w").sum(), nkeys=pl.len())
-        g = g.with_columns(
-            brank=pl.col("bscore").rank("ordinal", descending=True).over("idx")
+        # Hash-group iteration order is not a stable tie breaker.
+        g = g.sort(["idx", "bscore", "idx_t"], descending=[False, True, False]).with_columns(
+            brank=pl.int_range(1, pl.len() + 1).over("idx").cast(pl.UInt32)
         ).filter(pl.col("brank") <= top_k)
         out.append(g.rename({"idx": "sidx", "idx_t": "tidx"}))
         if verbose:
             print(f"  block {i + chunk:,}/{len(ids):,} joined={len(j):,} "
                   f"elapsed={time.time() - t0:.0f}s", flush=True)
-    return pl.concat(out)
+    return pl.concat(out) if out else pl.DataFrame(schema=PAIR_SCHEMA)

@@ -13,10 +13,17 @@ from __future__ import annotations
 import polars as pl
 
 
+def best_per_target(pred: pl.DataFrame, score: str) -> pl.DataFrame:
+    """Break equal scores by the lowest Source 1 row index, reproducibly."""
+    return (pred.filter(pl.col(score).is_finite())
+            .sort(["tidx", score, "sidx"], descending=[False, True, False])
+            .unique("tidx", keep="first", maintain_order=True))
+
+
 def expected_f05_select(pred: pl.DataFrame, score: str = "p2", miss: float = 0.25,
                         floor: float = 0.05) -> pl.DataFrame:
     """Return the chosen (sidx, tidx, score) pairs."""
-    df = pred.filter(pl.col(score) >= floor).sort(["sidx", score], descending=[False, True])
+    df = pred.filter(pl.col(score) >= floor).sort(["sidx", score, "tidx"], descending=[False, True, False])
     p = pl.col(score).cast(pl.Float64)
     # Stats for the empty prediction use all candidates, including those below the floor.
     tot = pred.group_by("sidx").agg(
@@ -35,5 +42,5 @@ def expected_f05_select(pred: pl.DataFrame, score: str = "p2", miss: float = 0.2
     ).with_columns(empty_ef=pl.col("p_none") * pl.lit(miss).neg().exp())
     keep = best.filter(pl.col("best_ef") > pl.col("empty_ef")).select("sidx", "best_k")
     chosen = df.join(keep, on="sidx").filter(pl.col("k") <= pl.col("best_k"))
-    chosen = chosen.filter(pl.col(score) == pl.col(score).max().over("tidx")).unique("tidx", keep="first")
+    chosen = best_per_target(chosen, score)
     return chosen.select("sidx", "tidx", score)

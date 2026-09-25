@@ -1,5 +1,11 @@
 # Star Coders - Amazon ML Challenge
 
+> **On branch `r4`, start with [the r4 run guide](docs/README_r4.md).** It covers
+> the current XGBoost and two-hop graph pipeline, native Windows setup, CPU/CUDA
+> switches, and the required stage-3 retraining. The r4 changes have only had
+> static review; no pipeline, benchmarks, or tests were run on the author's Mac.
+> The remainder of this README describes the earlier CatBoost baseline.
+
 Match noisy business records from Source 2 and Source 3 to every Source 1 business.
 The pipeline produces both required TSVs and a verified submission ZIP, using only
 the challenge dataset. **You can run the included trained model immediately;

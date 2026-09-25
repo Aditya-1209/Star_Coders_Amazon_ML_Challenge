@@ -73,12 +73,12 @@ def _jacc(a: str, b: str, prefix: str) -> list[pl.Expr]:
     ]
 
 
-def compute(pairs: pl.DataFrame) -> pl.DataFrame:
+def compute(pairs: pl.DataFrame, workers: int = -1) -> pl.DataFrame:
     feats = {}
     for field, name, scorer in STRING_FEATURES:
         a = pairs[field + "_l"].to_list()
         b = pairs[field + "_r"].to_list()
-        feats[name] = process.cpdist(a, b, scorer=scorer, workers=-1, dtype=np.float32)
+        feats[name] = process.cpdist(a, b, scorer=scorer, workers=workers, dtype=np.float32)
     f = pl.DataFrame(feats)
     tok = pairs.select(
         *_jacc("ntok_l", "ntok_r", "ntok"),
