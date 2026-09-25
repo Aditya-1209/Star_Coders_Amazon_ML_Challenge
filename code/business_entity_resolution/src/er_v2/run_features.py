@@ -10,7 +10,7 @@ from pathlib import Path
 import polars as pl
 
 from .features import add_block_context, compute, pair_frame, record_frames, token_idf
-from .run_block import load_split
+from .run_block import load_split, parquet_rows, split_countries
 from .runtime import BATCH_ROWS, DEFAULT_THREADS, positive_int
 
 
@@ -28,8 +28,10 @@ def main() -> None:
     ap.add_argument("--work", default="work")
     ap.add_argument("--dataset", default="student_resource/dataset")
     ap.add_argument("--split", required=True, choices=["train", "test"])
-    ap.add_argument("--shard-pairs", type=positive_int, default=8_000_000)
+    ap.add_argument("--shard-pairs", type=positive_int, default=200_000)
     ap.add_argument("--workers", type=positive_int, default=DEFAULT_THREADS)
+    ap.add_argument("--enhanced", action="store_true", help="compute experimental pair-local name features")
+    ap.add_argument("--include-unused-idf", action="store_true", help="legacy diagnostic columns; excluded from all models")
     ap.add_argument("--overwrite", action="store_true", help="delete an existing feature folder first")
     args = ap.parse_args()
     work = Path(args.work)
@@ -42,29 +44,26 @@ def main() -> None:
     out.mkdir(parents=True)
     (out / "_INCOMPLETE").write_text("Feature generation has not completed.\n", encoding="utf-8")
     t = time.time()
-    s1_all, tg_all = load_split(work, args.split)
-    s1_all = s1_all.with_columns(pl.col("idx").cast(pl.UInt32))
-    tg_all = tg_all.with_columns(pl.col("idx").cast(pl.UInt32))
-    n_s2 = len(pl.read_parquet(work / "norm" / f"{args.split}_source2.parquet", columns=["idx"]))
-    cands_all = pl.read_parquet(work / f"cands_{args.split}.parquet")
-    gt = None
-    if args.split == "train":
-        gt = ground_truth_pairs(Path(args.dataset), s1_all, tg_all).with_columns(label=pl.lit(1, pl.Int8))
+    n_s2 = parquet_rows(work / "norm" / f"{args.split}_source2.parquet")
     # Blocking keys, block context, genericness counts and token IDF are all
     # country-scoped, so one country at a time is exact and bounds peak RAM.
     n, shard = 0, 0
-    for country in s1_all["country"].unique().sort():
-        s1 = s1_all.filter(pl.col("country") == country)
-        tg = tg_all.filter(pl.col("country") == country)
-        cands = cands_all.join(s1.select(sidx="idx"), on="sidx", how="semi")
+    for country in split_countries(work, args.split):
+        s1, tg = load_split(work, args.split, country)
+        s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
+        tg = tg.with_columns(pl.col("idx").cast(pl.UInt32))
+        cands = (pl.scan_parquet(work / f"cands_{args.split}.parquet")
+                 .join(s1.select(sidx="idx").lazy(), on="sidx", how="semi").collect(engine="streaming"))
         if cands.is_empty():
             continue
         cands = add_block_context(cands)
-        if gt is not None:
+        if args.split == "train":
+            gt = ground_truth_pairs(Path(args.dataset), s1, tg).with_columns(label=pl.lit(1, pl.Int8))
             cands = cands.join(gt, on=["sidx", "tidx"], how="left").with_columns(pl.col("label").fill_null(0))
+            del gt
         cands = cands.sort("sidx", "brank")
         left, right = record_frames(s1, tg)
-        idf = token_idf(tg)
+        idf = token_idf(tg) if args.include_unused_idf else None
         del s1, tg
         sid = cands["sidx"]
         m = len(cands)
@@ -74,7 +73,7 @@ def main() -> None:
             while stop < m and sid[stop] == sid[stop - 1]:
                 stop += 1
             part = cands.slice(start, stop - start)
-            feats = compute(pair_frame(part, left, right, n_s2), workers=args.workers, idf=idf)
+            feats = compute(pair_frame(part, left, right, n_s2), workers=args.workers, idf=idf, enhanced=args.enhanced)
             if "label" in part.columns:
                 feats = feats.with_columns(part["label"])
             destination = out / f"part_{shard:03d}.parquet"
@@ -86,7 +85,7 @@ def main() -> None:
         n += m
         del cands, left, right, idf, sid
         gc.collect()
-    manifest = {"version": 1, "split": args.split, "pairs": n,
+    manifest = {"version": 1, "split": args.split, "pairs": n, "enhanced": args.enhanced,
                 "parts": [{"name": p.name, "bytes": p.stat().st_size, "mtime_ns": p.stat().st_mtime_ns}
                           for p in sorted(out.glob("part_*.parquet"))]}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

@@ -35,18 +35,22 @@ def _norm_chunk(args):
     return full, core, addr
 
 
-def normalize_frame(df: pl.DataFrame, pool: Pool, chunk: int = 50_000) -> pl.DataFrame:
-    names = df["business_name"].to_list()
-    addrs = df["business_address"].to_list()
-    jobs = [(names[i:i + chunk], addrs[i:i + chunk]) for i in range(0, len(names), chunk)]
-    full, core, addr = [], [], []
-    for f, c, a in pool.imap(_norm_chunk, jobs):
-        full += f
-        core += c
-        addr += a
-    return df.with_columns(
-        pl.Series("name_n", full), pl.Series("core_n", core), pl.Series("addr_n", addr),
-    )
+def normalize_frame(df: pl.DataFrame, pool: Pool, chunk: int = 25_000,
+                    buffer_rows: int = 200_000) -> pl.DataFrame:
+    # Bound Python strings and queued multiprocessing payloads to one window.
+    parts = []
+    for window in df.iter_slices(buffer_rows):
+        jobs = [(part["business_name"].to_list(), part["business_address"].to_list())
+                for part in window.iter_slices(chunk)]
+        full, core, addr = [], [], []
+        for f, c, a in pool.imap(_norm_chunk, jobs):
+            full.extend(f)
+            core.extend(c)
+            addr.extend(a)
+        parts.append(window.with_columns(
+            pl.Series("name_n", full), pl.Series("core_n", core), pl.Series("addr_n", addr)))
+    return pl.concat(parts) if parts else df.with_columns(
+        name_n=pl.lit(""), core_n=pl.lit(""), addr_n=pl.lit(""))
 
 
 def main() -> None:
@@ -54,7 +58,8 @@ def main() -> None:
     ap.add_argument("--dataset", default="student_resource/dataset")
     ap.add_argument("--work", default="work")
     ap.add_argument("--splits", nargs="+", default=["train", "test"])
-    ap.add_argument("--workers", type=int, default=os.cpu_count())
+    ap.add_argument("--workers", type=int, default=min(os.cpu_count() or 4, 8))
+    ap.add_argument("--buffer-rows", type=int, default=200_000)
     ap.add_argument("--translit", default=None, help="learned token map (translit.py)")
     args = ap.parse_args()
     out = Path(args.work) / "norm"
@@ -64,7 +69,7 @@ def main() -> None:
             for name in FILES[split]:
                 t = time.time()
                 df = read_tsv(Path(args.dataset) / split / f"{name}.tsv")
-                df = normalize_frame(df, pool)
+                df = normalize_frame(df, pool, buffer_rows=args.buffer_rows)
                 df = df.with_row_index("idx")
                 df.write_parquet(out / f"{name}.parquet")
                 print(f"{name}: {len(df):,} rows in {time.time() - t:.1f}s", flush=True)

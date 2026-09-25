@@ -163,7 +163,8 @@ def _jacc(a: str, b: str, prefix: str) -> list[pl.Expr]:
     ]
 
 
-def compute(pairs: pl.DataFrame, workers: int = -1, idf: dict[str, pl.DataFrame] | None = None) -> pl.DataFrame:
+def compute(pairs: pl.DataFrame, workers: int = -1, idf: dict[str, pl.DataFrame] | None = None,
+            enhanced: bool = False) -> pl.DataFrame:
     feats = {}
     for field, name, scorer in STRING_FEATURES:
         a = pairs[field + "_l"].to_list()
@@ -219,6 +220,9 @@ def compute(pairs: pl.DataFrame, workers: int = -1, idf: dict[str, pl.DataFrame]
     if idf is not None:
         frames.append(_weighted_overlap(pairs, "ntok_l", "ntok_r", idf["n"], "wn"))
         frames.append(_weighted_overlap(pairs, "atok_l", "atok_r", idf["a"], "wa"))
+    if enhanced:
+        from .name_features import compute_name_features
+        frames.append(compute_name_features(pairs, workers))
     return pl.concat(frames, how="horizontal")
 
 
@@ -257,5 +261,9 @@ SPLIT_DEPENDENT = {
 }
 
 
-def feature_names(df: pl.DataFrame) -> list[str]:
-    return [c for c in df.columns if c not in ("sidx", "tidx", "label") and c not in SPLIT_DEPENDENT]
+def feature_names(df: pl.DataFrame, profile: str = "enhanced") -> list[str]:
+    from .name_features import EXTRA_FEATURES
+    excluded = SPLIT_DEPENDENT | {"sidx", "tidx", "label", "fold", "w"}
+    if profile == "baseline":
+        excluded |= set(EXTRA_FEATURES)
+    return [c for c in df.columns if c not in excluded]

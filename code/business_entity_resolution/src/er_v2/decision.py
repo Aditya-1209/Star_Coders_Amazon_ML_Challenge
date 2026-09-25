@@ -87,6 +87,40 @@ def best_per_target(pred: pl.DataFrame, score: str) -> pl.DataFrame:
             .unique("tidx", keep="first", maintain_order=True))
 
 
+def decide_country(pred: pl.DataFrame, threshold: float, anchors: pl.DataFrame,
+                   thresholds: dict[str, float], score: str = "p2") -> pl.DataFrame:
+    """Country cutoffs with a global fallback for unlabeled/unseen countries."""
+    if not thresholds:
+        return best_per_target(pred.filter(pl.col(score) >= threshold), score)
+    limits = anchors.select("sidx", _cut=pl.col("country").replace_strict(
+        thresholds, default=threshold, return_dtype=pl.Float64))
+    eligible = pred.join(limits, on="sidx", how="left").filter(
+        pl.col(score) >= pl.col("_cut").fill_null(threshold)).drop("_cut")
+    return best_per_target(eligible, score)
+
+
+def tune_country_thresholds(pred: pl.DataFrame, truth: pl.DataFrame, anchors: pl.DataFrame,
+                            global_threshold: float, score: str = "p2",
+                            minimum_anchors: int = 1000) -> dict[str, float]:
+    """Only pass tuning-fold anchors/truth, excluding any held-out countries.
+
+    Require enough businesses and a >0.0001 tuning gain over the global cutoff.
+    Countries absent from tuning labels always retain the global fallback.
+    """
+    from .metrics import macro_f05
+    result = {}
+    for (country,), group in anchors.group_by("country"):
+        if len(group) < minimum_anchors:
+            continue
+        pairs = pred.join(group.select("sidx"), on="sidx", how="semi")
+        value, cutoff = tune_threshold(pairs, truth, group["sidx"], score)
+        baseline = macro_f05(best_per_target(pairs.filter(pl.col(score) >= global_threshold), score),
+                             truth, group["sidx"])["macro_f05"]
+        if value > baseline + 0.0001:
+            result[country] = cutoff
+    return result
+
+
 def expected_f05_select(pred: pl.DataFrame, score: str = "p2", miss: float = 0.25,
                         floor: float = 0.05) -> pl.DataFrame:
     """Return the chosen (sidx, tidx, score) pairs."""

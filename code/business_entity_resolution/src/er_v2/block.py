@@ -20,6 +20,7 @@ CAPS = {"n": 2000, "c": 500, "p": 500, "a": 2000, "w": 2000, "q": 500}
 # Typo/transliteration rescue channel (from r5-recall-speed): 4-char prefix "u",
 # 4-char suffix "v", consonant skeleton "h" of name tokens with >= 5 letters.
 RESCUE_CAPS = {"u": 100, "v": 100, "h": 200}
+PHONETIC_CAPS = {"f": 100, "fc": 100, "fp": 200}
 PAIR_SCHEMA = {"sidx": pl.UInt32, "tidx": pl.UInt32, "bscore": pl.Float32,
                "nkeys": pl.UInt32, "brank": pl.UInt32}
 
@@ -83,6 +84,28 @@ def merge_candidates(base: pl.DataFrame, rescue: pl.DataFrame, top_k: int) -> pl
         base.with_columns(rescue=pl.lit(0, pl.Int8)),
         added.with_columns(rescue=pl.lit(1, pl.Int8), brank=pl.col("brank") + top_k),
     ]).sort("sidx", "brank", "tidx")
+
+
+def make_phonetic_keys(df: pl.DataFrame) -> pl.DataFrame:
+    from .phonetic import phonetic_expr
+    tokens = (df.select("idx", "country", s=pl.col("core_n").str.split(" "))
+              .explode("s").filter(pl.col("s").str.len_chars() >= 5))
+    single = (tokens.with_columns(code=phonetic_expr(pl.col("s")))
+              .filter(pl.col("code").str.len_chars() >= 3)
+              .select("idx", "country", kind=pl.lit("f"), code="code"))
+    compact = (df.with_columns(code=phonetic_expr(pl.col("core_n")))
+               .filter(pl.col("code").str.len_chars() >= 5)
+               .select("idx", "country", kind=pl.lit("fc"), code="code"))
+    word = (df.select("idx", "country", code=pl.col("core_n").str.split(" "))
+            .explode("code").with_columns(code=phonetic_expr(pl.col("code")))
+            .with_columns(nxt=pl.col("code").shift(-1).over("idx")))
+    phrase = (word.filter((pl.col("code").str.len_chars() >= 2) & (pl.col("nxt").str.len_chars() >= 2))
+              .select("idx", "country", kind=pl.lit("fp"),
+                      code=pl.min_horizontal("code", "nxt") + "_" + pl.max_horizontal("code", "nxt")))
+    return (pl.concat([single, compact, phrase])
+            .select(pl.col("idx").cast(pl.UInt32), "kind",
+                    key=(pl.col("kind") + "|" + pl.col("country") + "|" + pl.col("code")).hash(seed=7))
+            .unique(["idx", "key"]))
 
 
 def build_target_index(tkeys: pl.DataFrame, n_targets: int, caps=CAPS) -> pl.DataFrame:

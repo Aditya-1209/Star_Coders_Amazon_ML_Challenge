@@ -1,11 +1,10 @@
 # Star Coders - Amazon ML Challenge
 
-> **On branch `r4`, start with [the r4 run guide](docs/README_r4.md).** It covers
-> broader candidate retrieval, additional match features, a two-model XGBoost
-> ranker, and validation-selected graph blending. Regenerate features and retrain
-> all stages in a fresh workspace. The r4 changes have only had
-> static review; no pipeline, benchmarks, or tests were run on the author's Mac.
-> The remainder of this README describes the earlier CatBoost baseline.
+> **On `r7-improvements`, start with [the r7 experiment guide](docs/README_r7_overnight.md).**
+> It runs a CPU or CUDA experiment with phonetic retrieval, token-alignment
+> features, a train/test shift diagnostic, and validation-selected feature
+> ablations. Local holdout results are not Amazon leaderboard scores.
+> The remainder of this README describes the historical CatBoost baseline.
 
 Match noisy business records from Source 2 and Source 3 to every Source 1 business.
 The pipeline produces both required TSVs and a verified submission ZIP, using only

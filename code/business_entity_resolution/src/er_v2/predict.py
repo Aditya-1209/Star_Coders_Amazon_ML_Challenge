@@ -19,8 +19,8 @@ from pathlib import Path
 import xgboost as xgb
 import polars as pl
 
-from .train import context_features, decide, predict_frame, predict_ensemble
-from .decision import NO_MATCH_THRESHOLD
+from .train import ContextIndex, context_features, decide, predict_frame, predict_ensemble
+from .decision import NO_MATCH_THRESHOLD, decide_country
 from .runtime import BATCH_ROWS, DEFAULT_THREADS, feature_parts, positive_int
 
 
@@ -74,13 +74,13 @@ def main() -> None:
         scores.append(df.select("sidx", "tidx").with_columns(
             p1=pl.Series(predict_ensemble(rankers, df, f1, args.batch_rows))).filter(pl.col("p1") >= prune))
     scores = pl.concat(scores)
-    ctx = context_features(scores)
+    ctx = ContextIndex(context_features(scores))
     print(f"stage1 done: {len(scores):,} survivors, {time.time() - t:.0f}s", flush=True)
     del scores
 
     preds = []
     for p in parts:
-        df = pl.read_parquet(p).join(ctx, on=["sidx", "tidx"], how="inner", maintain_order="left")
+        df = ctx.attach(pl.read_parquet(p))
         preds.append(df.select("sidx", "tidx", "p1").with_columns(
             p2=pl.Series(predict_frame(m2, df, f2, args.batch_rows))))
     preds = pl.concat(preds)
@@ -88,12 +88,13 @@ def main() -> None:
     print(f"stage2 done on {len(preds):,} pruned candidates (p1>={prune}), {time.time() - t:.0f}s", flush=True)
 
     norm = work / "norm"
-    s1 = pl.read_parquet(norm / "test_source1.parquet", columns=["idx", "entity_id"])
+    s1 = pl.read_parquet(norm / "test_source1.parquet", columns=["idx", "entity_id", "country"])
     tg_ids = pl.concat([
         pl.read_parquet(norm / "test_source2.parquet", columns=["entity_id"]),
         pl.read_parquet(norm / "test_source3.parquet", columns=["entity_id"]),
     ])["entity_id"]
-    matches = decide(preds, thr)
+    cutoffs = meta.get("country_thresholds", {}) if args.threshold is None else {}
+    matches = decide_country(preds, thr, s1.select(sidx="idx", country="country"), cutoffs)
     write_lists(out / "candidate_pairs.tsv", s1, preds.sort("sidx", "p2", descending=[False, True]),
                 tg_ids, "candidate_entity_ids")
     write_lists(out / "matching_results.tsv", s1, matches.sort("sidx", "p2", descending=[False, True]),

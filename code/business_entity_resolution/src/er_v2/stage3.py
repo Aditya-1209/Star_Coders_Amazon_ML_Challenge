@@ -11,16 +11,19 @@ import gc
 import json
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import polars as pl
+import numpy as np
 import xgboost as xgb
 
-from .block import build_target_index, make_keys
+from .block import make_keys
+from .indexing import build_index
 from .features import compute, pair_frame, record_frames, token_idf
-from .decision import NO_MATCH_THRESHOLD, blend_scores, tune_blend
+from .decision import NO_MATCH_THRESHOLD, blend_scores, tune_blend, tune_country_thresholds, decide_country
 from .graph import anchors_of, expand, hop_keep, support_features
 from .metrics import by_country, leaderboard_estimate, macro_f05
-from .run_block import load_split
+from .run_block import load_split, split_countries, parquet_rows
 from .runtime import BATCH_ROWS, DEFAULT_THREADS, feature_parts, positive_int
 from .train import FEATURE_VERSION, PARAMS, decide, fit, fold_expr, predict_frame
 
@@ -30,12 +33,29 @@ BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc"
 
 def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
           batch_rows: int = BATCH_ROWS, support_anchors: int = 100_000, workers: int = DEFAULT_THREADS,
-          prune_hops: bool = True) -> pl.DataFrame:
+          prune_hops: bool = True, block_chunk: int = 2_000) -> pl.DataFrame:
+    with TemporaryDirectory(prefix="graph-", dir=work) as tmp:
+        paths = []
+        for i, country in enumerate(split_countries(work, split)):
+            log(f"building graph for {country}")
+            frame = _build_country(split, work, stage2, feats_dir, log, batch_rows,
+                                   support_anchors, workers, prune_hops, block_chunk, country)
+            path = Path(tmp) / f"{i}.parquet"
+            frame.write_parquet(path)
+            paths.append(path)
+            del frame
+            gc.collect()
+        return pl.scan_parquet(paths).collect(engine="streaming")
+
+
+def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anchors,
+                   workers, prune_hops, block_chunk, country):
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
-    s1, tg = load_split(work, split)
+    s1, tg = load_split(work, split, country)
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
     tg = tg.with_columns(pl.col("idx").cast(pl.UInt32))
-    n_s2 = len(pl.read_parquet(work / "norm" / f"{split}_source2.parquet", columns=["idx"]))
+    n_s2 = parquet_rows(work / "norm" / f"{split}_source2.parquet")
+    stage2 = stage2.join(s1.select(sidx="idx"), on="sidx", how="semi")
     anchors = anchors_of(stage2)
     log(f"anchors {len(anchors):,}")
 
@@ -43,12 +63,19 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
         from .graph import HOP_SCHEMA
         hop = pl.DataFrame(schema=HOP_SCHEMA)
     else:
-        tkeys = make_keys(tg)
-        tindex = build_target_index(tkeys, len(tg))
-        tkeys = tkeys.drop("kind")
-        gc.collect()
-        hop = expand(anchors, tkeys, tindex)
-        del tkeys, tindex
+        n_targets = sum(parquet_rows(work / "norm" / f"{split}_source{i}.parquet") for i in (2, 3))
+        tindex = build_index(tg.select("idx", "country", "core_n", "addr_n"), n_targets, work)
+        query_records = tg.join(anchors.select(idx="a").unique(), on="idx", how="semi")
+        chunks = []
+        for query in query_records.iter_slices(50_000):
+            local_anchors = anchors.join(query.select(a="idx"), on="a", how="semi")
+            chunks.append(expand(local_anchors, make_keys(query), tindex, block_chunk))
+        hop = pl.concat(chunks).group_by("sidx", "tidx").agg(
+            pl.col("hop_score").max(), pl.col("hop_rank").min(),
+            pl.col("hop_n").sum(), pl.col("hop_pa").max())
+        from .graph import HOP_SCHEMA
+        hop = hop.cast(HOP_SCHEMA)
+        del query_records, chunks, tindex
     gc.collect()
     log(f"two-hop pairs {len(hop):,}")
 
@@ -68,11 +95,12 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
         old = old.drop("label")
     new_pairs = keyset.join(old.select("sidx", "tidx"), on=["sidx", "tidx"], how="anti")
     left, right = record_frames(s1, tg)
-    idf = token_idf(tg)
+    idf = token_idf(tg) if "wn_jacc" in old.columns else None
     new_parts = []
     for batch in new_pairs.iter_slices(batch_rows):
         batch = batch.with_columns(*[pl.lit(None, pl.Float32).alias(c) for c in BLOCK_COLS])
-        new_parts.append(compute(pair_frame(batch, left, right, n_s2), workers=workers, idf=idf).select(old.columns))
+        new_parts.append(compute(pair_frame(batch, left, right, n_s2), workers=workers, idf=idf,
+                                 enhanced="token_align_min" in old.columns).select(old.columns).cast(old.schema))
     newf = pl.concat(new_parts) if new_parts else old.head(0)
     log(f"computed features for {len(newf):,} new pairs")
     base = pl.concat([old, newf.select(old.columns)], how="vertical_relaxed")
@@ -80,10 +108,14 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
     gc.collect()
 
     txt = right.select("idx", "core_r", "addr_r", "cc_r")
+    pairs = pairs.sort("sidx", "tidx")
+    source_ids = pairs["sidx"].to_numpy()
     ids = pairs["sidx"].unique().sort()
     sup = []
     for i in range(0, len(ids), support_anchors):
-        chunk = pairs.join(pl.DataFrame({"sidx": ids[i:i + support_anchors]}), on="sidx", how="semi")
+        lo = int(np.searchsorted(source_ids, ids[i], side="left"))
+        hi = int(np.searchsorted(source_ids, ids[min(i + support_anchors, len(ids)) - 1], side="right"))
+        chunk = pairs.slice(lo, hi - lo)
         sup.append(support_features(chunk, anchors, txt, workers=workers))
     sup = pl.concat(sup) if sup else support_features(pairs, anchors, txt, workers=workers)
     del right
@@ -97,9 +129,10 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
     return out
 
 
-def feature_cols(df: pl.DataFrame) -> list[str]:
+def feature_cols(df: pl.DataFrame, profile: str = "enhanced") -> list[str]:
     from .features import SPLIT_DEPENDENT
-    return [c for c in df.columns if c not in ("sidx", "tidx", "label", "fold") and c not in SPLIT_DEPENDENT]
+    from .features import feature_names
+    return feature_names(df, profile)
 
 
 def main() -> None:
@@ -114,6 +147,11 @@ def main() -> None:
     ap.add_argument("--batch-rows", type=positive_int, default=BATCH_ROWS)
     ap.add_argument("--support-anchors", type=positive_int, default=100_000)
     ap.add_argument("--rounds", type=positive_int, default=2000)
+    ap.add_argument("--block-chunk", type=positive_int, default=2_000)
+    ap.add_argument("--feature-profile", choices=["baseline", "enhanced"], default="baseline")
+    ap.add_argument("--compare-baseline", action="store_true")
+    ap.add_argument("--country-thresholds", action="store_true")
+    ap.add_argument("--hist-cache-nodes", type=positive_int, default=2048)
     ap.add_argument("--exclude-country", nargs="*", default=[],
                     help="leave these countries out of stage-3 training (unseen-country proxy)")
     args = ap.parse_args()
@@ -122,8 +160,10 @@ def main() -> None:
     t = time.time()
     log = lambda m: print(f"[{time.time() - t:6.0f}s] {m}", flush=True)
     build_options = {"batch_rows": args.batch_rows, "support_anchors": args.support_anchors,
-                     "workers": args.threads}
+                     "workers": args.threads, "block_chunk": args.block_chunk}
     stage2_meta = json.loads((mdir / "metrics.json").read_text(encoding="utf-8"))
+    if stage2_meta.get("ghost_frac", 0) > 0:
+        raise ValueError("Stage 3 does not yet support ghost training; use a non-ghost stage-2 model")
     if stage2_meta.get("feature_version") != FEATURE_VERSION:
         raise ValueError("Regenerate accuracy features and retrain er_v2.train before stage 3")
 
@@ -133,18 +173,39 @@ def main() -> None:
         keep = TRAIN_FOLDS + [TUNE_FOLD, HOLD_FOLD]
         st2 = st2.filter(pl.col("fold").is_in(keep)).drop("label", "fold")
         df = build("train", work, st2, work / "feats_train", log, prune_hops=False, **build_options)
-        s1, tg = load_split(work, "train")
+        s1, tg = load_split(work, "train", columns=["idx", "entity_id", "country"])
         truth = ground_truth_pairs(Path(args.dataset), s1, tg)
         df = df.join(truth.with_columns(label=pl.lit(1, pl.Int8)), on=["sidx", "tidx"], how="left")
         df = df.with_columns(pl.col("label").fill_null(0), fold_expr())
         df.write_parquet(work / f"stage3_train{tag}.parquet")
-        feats = feature_cols(df)
+        feats = feature_cols(df, args.feature_profile)
         country = s1.select(sidx=pl.col("idx").cast(pl.UInt32), country="country")
         seen = ~pl.col("sidx").is_in(
             country.filter(pl.col("country").is_in(args.exclude_country))["sidx"])
         tr = df.filter(pl.col("fold").is_in(TRAIN_FOLDS) & seen)
-        va = df.filter(pl.col("fold") == TUNE_FOLD)
-        m3 = fit(tr, feats, va, args.rounds, {**PARAMS, "device": args.device, "nthread": args.threads})
+        va = df.filter((pl.col("fold") == TUNE_FOLD) & seen)
+        params = {**PARAMS, "device": args.device, "nthread": args.threads,
+                  "max_cached_hist_node": args.hist_cache_nodes}
+        m3 = fit(tr, feats, va, args.rounds, params)
+        trials = []
+        if args.compare_baseline and args.feature_profile == "enhanced":
+            baseline_feats = feature_cols(df, "baseline")
+            baseline = fit(tr, baseline_feats, va, args.rounds, params)
+            baseline.save_model(str(mdir / "stage3_baseline.json"))
+            m3.save_model(str(mdir / "stage3_enhanced.json"))
+            selection_data = va.filter(hop_keep())
+            selection_anchors = country.filter((fold_expr() == TUNE_FOLD) & seen)["sidx"]
+            selection_truth = truth.filter(fold_expr() == TUNE_FOLD)
+            for name, model, columns in (("baseline", baseline, baseline_feats), ("enhanced", m3, feats)):
+                predictions = selection_data.select("sidx", "tidx", "p2").with_columns(
+                    p3=pl.Series(predict_frame(model, selection_data, columns, args.batch_rows)))
+                trial = tune_blend(predictions, selection_truth, selection_anchors)
+                value = max(t["macro_f05"] for t in trial["tuning_trials"])
+                trials.append({"profile": name, "fold3_macro_f05": value, **trial})
+                log(f"stage3 feature ablation: {name} F0.5={value:.6f}")
+            if trials[0]["fold3_macro_f05"] >= trials[1]["fold3_macro_f05"]:
+                m3, feats = baseline, baseline_feats
+            del baseline, selection_data, selection_anchors, selection_truth, predictions
         del tr, va
         mdir.mkdir(parents=True, exist_ok=True)
         m3.save_model(str(mdir / "stage3.json"))
@@ -163,25 +224,33 @@ def main() -> None:
         selection = tune_blend(tune, t3, a3)
         thr = selection["threshold"]
         pure_threshold = selection["tuning_trials"][-1]["threshold"]
-        res = {**selection, "stage3_threshold": pure_threshold,
+        res = {**selection, "stage3_threshold": pure_threshold, "feature_trials": trials,
+               "feature_profile": "enhanced" if "token_align_min" in feats else "baseline",
                "features": feats, "best_iteration": m3.best_iteration,
                "feature_version": FEATURE_VERSION, "selection_fold": TUNE_FOLD,
                "runtime": {"device": args.device, "threads": args.threads,
                "batch_rows": args.batch_rows, "support_anchors": args.support_anchors}}
         ev = blend_scores(ev, selection["stage3_weight"])
+        country_thresholds = tune_country_thresholds(
+            ev.filter(pl.col("fold") == TUNE_FOLD), t3,
+            anchors.filter((pl.col("fold") == TUNE_FOLD) & ~pl.col("country").is_in(args.exclude_country)),
+            thr, "score") if args.country_thresholds else {}
+        res["country_thresholds"] = country_thresholds
         ev.write_parquet(work / "eval_preds_stage3.parquet")
         for fold in (TUNE_FOLD, HOLD_FOLD):
             e = ev.filter(pl.col("fold") == fold)
             a = anchors.filter(pl.col("fold") == fold)["sidx"]
             tr_ = truth.filter(pl.col("fold") == fold)
-            res[f"fold{fold}_selected"] = macro_f05(decide(e, thr, "score"), tr_, a)
+            res[f"fold{fold}_selected"] = macro_f05(decide_country(e, thr, anchors, country_thresholds, "score"), tr_, a)
+            res[f"fold{fold}_global_reference"] = macro_f05(decide(e, thr, "score"), tr_, a)
             res[f"fold{fold}_stage3"] = macro_f05(decide(e, pure_threshold, "p3"), tr_, a)
             res[f"fold{fold}_stage2_ref"] = macro_f05(
-                decide(e.filter(pl.col("p2").is_not_null()), meta_thr(mdir), "p2"), tr_, a)
+                decide_country(e.filter(pl.col("p2").is_not_null()), meta_thr(mdir), anchors,
+                               stage2_meta.get("country_thresholds", {}), "p2"), tr_, a)
             res[f"fold{fold}_oracle"] = macro_f05(e.join(tr_, on=["sidx", "tidx"]), tr_, a)
             res[f"fold{fold}_mean_candidates"] = len(e) / len(a)
         hold = ev.filter(pl.col("fold") == HOLD_FOLD)
-        per = by_country(decide(hold, thr, "score"), truth.filter(pl.col("fold") == HOLD_FOLD),
+        per = by_country(decide_country(hold, thr, anchors, country_thresholds, "score"), truth.filter(pl.col("fold") == HOLD_FOLD),
                          anchors.filter(pl.col("fold") == HOLD_FOLD))
         res["fold4_by_country"] = per
         res["leaderboard_estimate"] = leaderboard_estimate(per)
@@ -213,11 +282,12 @@ def main() -> None:
     preds = blend_scores(preds, meta["stage3_weight"])
     preds.write_parquet(work / "test_preds_stage3.parquet")
     df.write_parquet(work / "stage3_test.parquet")  # reused by selftrain.py
-    matches = decide(preds, meta["threshold"], "score")
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
     norm = work / "norm"
-    s1 = pl.read_parquet(norm / "test_source1.parquet", columns=["idx", "entity_id"])
+    s1 = pl.read_parquet(norm / "test_source1.parquet", columns=["idx", "entity_id", "country"])
+    matches = decide_country(preds, meta["threshold"], s1.select(sidx="idx", country="country"),
+                             meta.get("country_thresholds", {}), "score")
     tg_ids = pl.concat([pl.read_parquet(norm / "test_source2.parquet", columns=["entity_id"]),
                         pl.read_parquet(norm / "test_source3.parquet", columns=["entity_id"])])["entity_id"]
     write_lists(out / "candidate_pairs.tsv", s1, preds.sort("sidx", "score", descending=[False, True]),
