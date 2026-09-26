@@ -266,6 +266,36 @@ def neural_rescue(work, split, k):
     return ContextIndex(frame)
 
 
+# ---- record-side name competition (r11; off unless --record-competition) ------
+# 72% of true matches that stage 2 rejects have no address, so only the name is
+# left. The decisive question is then how many *other* businesses that could claim
+# the same record have an equally close name. Computed over all stage-1 survivors
+# claiming a record (global, not per shard); relative, so split-size independent.
+RECORD_COMPETITION = ["rc_n_claim", "rc_n_name90", "rc_name_rank", "rc_name_gap_other",
+                      "rc_addr_rank", "rc_addr_gap_other"]
+
+
+def record_competition(folder: Path, survivors: pl.DataFrame) -> pl.DataFrame:
+    keys = survivors.select("sidx", "tidx")
+    parts = [pl.read_parquet(p, columns=["sidx", "tidx", "core_tset", "addr_tset"]).join(
+                 keys, on=["sidx", "tidx"], how="semi") for p in feature_parts(folder)]
+    x = pl.concat(parts)
+    top = x.group_by("tidx").agg(
+        n1=pl.col("core_tset").top_k(2).max(), n2=pl.col("core_tset").top_k(2).min(),
+        a1=pl.col("addr_tset").top_k(2).max(), a2=pl.col("addr_tset").top_k(2).min(), cnt=pl.len())
+    x = x.join(top, on="tidx", how="left")
+    other = lambda v, best, second: pl.when(pl.col("cnt") <= 1).then(0.0).when(pl.col(v) >= pl.col(best)).then(
+        pl.col(second)).otherwise(pl.col(best))
+    return x.with_columns(
+        rc_n_claim=pl.col("cnt").cast(pl.UInt16),
+        rc_n_name90=(pl.col("core_tset") >= 90).sum().over("tidx").cast(pl.UInt16),
+        rc_name_rank=pl.col("core_tset").rank("min", descending=True).over("tidx").cast(pl.Float32),
+        rc_name_gap_other=(pl.col("core_tset") - other("core_tset", "n1", "n2")).cast(pl.Float32),
+        rc_addr_rank=pl.col("addr_tset").rank("min", descending=True).over("tidx").cast(pl.Float32),
+        rc_addr_gap_other=(pl.col("addr_tset") - other("addr_tset", "a1", "a2")).cast(pl.Float32),
+    ).select("sidx", "tidx", *RECORD_COMPETITION)
+
+
 def context_features(scores: pl.DataFrame) -> pl.DataFrame:
     """Stage-2 context from stage-1 scores; target competition is global."""
     scores = scores.sort(["p1", "sidx", "tidx"], descending=[True, False, False])
@@ -313,6 +343,8 @@ def main() -> None:
     ap.add_argument("--extra-stage1-folds", action=argparse.BooleanOptionalAction, default=True,
                     help="use folds 8/9 as additional stage-1 training data")
     ap.add_argument("--neural-rescue-k", type=int, default=0)
+    ap.add_argument("--record-competition", action="store_true",
+                    help="stage-2 record-side name/address competition among a record's claimants")
     ap.add_argument("--lookalike", action="store_true",
                     help="stage-2 look-alike competition features (same-name candidates, address rank)")
     ap.add_argument("--neural", action="store_true",
@@ -366,6 +398,8 @@ def main() -> None:
     scores = stage1_scores(folder, held_out, rankers, f1, args.batch_rows, floor=PRUNE, rescue=neural_rescue(work, "train", args.neural_rescue_k))
     ctx = context_features(scores)
     del scores
+    if args.record_competition:
+        ctx = ctx.join(record_competition(folder, ctx), on=["sidx", "tidx"], how="left")
     if args.neural:
         from .neural import Embeddings, neural_features
         ctx = ctx.join(neural_features(ctx, Embeddings(work, "train")), on=["sidx", "tidx"], how="left")
@@ -480,6 +514,7 @@ def main() -> None:
     results["neural"] = bool(args.neural)
     results["neural_rescue_k"] = args.neural_rescue_k
     results["lookalike"] = bool(args.lookalike)
+    results["record_competition"] = bool(args.record_competition)
     results["feature_trials"] = trials
     results["feature_profile"] = "enhanced" if "token_align_min" in f2 else "baseline"
     results["stage1_feature_profile"] = "baseline"

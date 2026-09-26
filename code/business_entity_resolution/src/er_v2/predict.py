@@ -78,6 +78,10 @@ def main() -> None:
         scores.append(keep_candidates(current, prune, rescue))
     scores = pl.concat(scores)
     ctx = context_features(scores)
+    if meta.get("record_competition"):
+        from .train import record_competition
+        ctx = ctx.join(record_competition(Path(args.feats or work / "feats_test"), ctx),
+                       on=["sidx", "tidx"], how="left")
     if meta.get("lookalike"):
         from .train import LOOKALIKE
         LOOKALIKE["on"] = True
