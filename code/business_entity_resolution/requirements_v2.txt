@@ -6,3 +6,10 @@ polars==1.44.2
 polars-runtime-32==1.44.2
 pyarrow==25.0.1
 RapidFuzz==3.14.6
+# r8 neural encoder (fine-tuned intfloat/multilingual-e5-small, MIT; CUDA wheel from
+# https://download.pytorch.org/whl/cu126 -- use the CPU wheel on machines without CUDA)
+torch==2.14.0
+sentence-transformers==6.1.0
+transformers==5.17.0
+datasets==5.0.1
+accelerate==1.15.0

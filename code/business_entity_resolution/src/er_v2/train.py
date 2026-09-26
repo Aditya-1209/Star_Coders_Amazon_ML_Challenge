@@ -266,6 +266,8 @@ def main() -> None:
                     help="leave these countries out of all training (unseen-country proxy for France)")
     ap.add_argument("--extra-stage1-folds", action=argparse.BooleanOptionalAction, default=True,
                     help="use folds 8/9 as additional stage-1 training data")
+    ap.add_argument("--neural", action="store_true",
+                    help="add fine-tuned encoder similarity (work/emb) to stage 2; never to stage 1")
     ap.add_argument("--ghost-frac", type=float, default=0.0,
                     help=f"simulate test record density by removing this share of train businesses "
                          f"(test-like: {TEST_DENSITY_GHOST_FRAC})")
@@ -313,6 +315,9 @@ def main() -> None:
     scores = stage1_scores(folder, held_out, rankers, f1, args.batch_rows, floor=PRUNE)
     ctx = context_features(scores)
     del scores
+    if args.neural:
+        from .neural import Embeddings, neural_features
+        ctx = ctx.join(neural_features(ctx, Embeddings(work, "train")), on=["sidx", "tidx"], how="left")
     print(f"stage1 scored + context, {time.time() - t:.0f}s", flush=True)
 
     ctx_cols = [c for c in ctx.columns if c not in ("sidx", "tidx")]
@@ -418,6 +423,7 @@ def main() -> None:
     results["stage2_training_folds"] = [2, 5]
     results["stage3_eligible_folds"] = [3, 4, 6, 7]
     results["feature_version"] = FEATURE_VERSION
+    results["neural"] = bool(args.neural)
     results["feature_trials"] = trials
     results["feature_profile"] = "enhanced" if "token_align_min" in f2 else "baseline"
     results["stage1_feature_profile"] = "baseline"

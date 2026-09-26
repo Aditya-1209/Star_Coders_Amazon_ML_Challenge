@@ -74,7 +74,11 @@ def main() -> None:
         scores.append(df.select("sidx", "tidx").with_columns(
             p1=pl.Series(predict_ensemble(rankers, df, f1, args.batch_rows))).filter(pl.col("p1") >= prune))
     scores = pl.concat(scores)
-    ctx = ContextIndex(context_features(scores))
+    ctx = context_features(scores)
+    if meta.get("neural"):
+        from .neural import Embeddings, neural_features
+        ctx = ctx.join(neural_features(ctx, Embeddings(work, "test")), on=["sidx", "tidx"], how="left")
+    ctx = ContextIndex(ctx)
     print(f"stage1 done: {len(scores):,} survivors, {time.time() - t:.0f}s", flush=True)
     del scores
 

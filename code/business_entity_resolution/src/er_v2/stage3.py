@@ -31,15 +31,19 @@ TRAIN_FOLDS, TUNE_FOLD, HOLD_FOLD = [6, 7], 3, 4
 BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc", "s_nc", "rescue"]
 
 
-def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
+def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log, neural: bool = False,
           batch_rows: int = BATCH_ROWS, support_anchors: int = 100_000, workers: int = DEFAULT_THREADS,
           prune_hops: bool = True, block_chunk: int = 2_000) -> pl.DataFrame:
+    emb = None
+    if neural:
+        from .neural import Embeddings
+        emb = Embeddings(work, split)
     with TemporaryDirectory(prefix="graph-", dir=work) as tmp:
         paths = []
         for i, country in enumerate(split_countries(work, split)):
             log(f"building graph for {country}")
             frame = _build_country(split, work, stage2, feats_dir, log, batch_rows,
-                                   support_anchors, workers, prune_hops, block_chunk, country)
+                                   support_anchors, workers, prune_hops, block_chunk, country, emb)
             path = Path(tmp) / f"{i}.parquet"
             frame.write_parquet(path)
             paths.append(path)
@@ -49,7 +53,7 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
 
 
 def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anchors,
-                   workers, prune_hops, block_chunk, country):
+                   workers, prune_hops, block_chunk, country, emb=None):
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
     s1, tg = load_split(work, split, country)
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
@@ -82,6 +86,10 @@ def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anch
     direct = stage2.select("sidx", "tidx", "p1", "p2").with_columns(direct=pl.lit(1, pl.Int8))
     pairs = direct.join(hop, on=["sidx", "tidx"], how="full", coalesce=True)
     pairs = pairs.with_columns(pl.col("direct").fill_null(0))
+    if emb is not None:
+        from .neural import neural_features
+        pairs = pairs.join(neural_features(pairs, emb), on=["sidx", "tidx"], how="left")
+        log("attached fine-tuned encoder features to stage-3 candidates")
     log(f"stage-3 candidates {len(pairs):,} ({len(pairs) / s1.height:.2f} per source1 overall)")
 
     # pairwise features: reuse stored ones for direct pairs, compute for new pairs
@@ -172,7 +180,8 @@ def main() -> None:
         st2 = pl.read_parquet(work / f"stage2_train{tag}.parquet").with_columns(fold_expr())
         keep = TRAIN_FOLDS + [TUNE_FOLD, HOLD_FOLD]
         st2 = st2.filter(pl.col("fold").is_in(keep)).drop("label", "fold")
-        df = build("train", work, st2, work / "feats_train", log, prune_hops=False, **build_options)
+        df = build("train", work, st2, work / "feats_train", log, neural=bool(stage2_meta.get("neural")),
+                   prune_hops=False, **build_options)
         s1, tg = load_split(work, "train", columns=["idx", "entity_id", "country"])
         truth = ground_truth_pairs(Path(args.dataset), s1, tg)
         df = df.join(truth.with_columns(label=pl.lit(1, pl.Int8)), on=["sidx", "tidx"], how="left")
@@ -274,7 +283,8 @@ def main() -> None:
     if meta.get("feature_version") != FEATURE_VERSION:
         raise ValueError("Stage-3 accuracy features changed; retrain er_v2.stage3 --split train first")
     st2 = pl.read_parquet(work / "test_preds.parquet")
-    df = build("test", work, st2, work / "feats_test", log, **build_options)
+    df = build("test", work, st2, work / "feats_test", log, neural=bool(stage2_meta.get("neural")),
+               **build_options)
     m3 = xgb.Booster(model_file=str(mdir / "stage3.json"))
     m3.set_param({"device": args.device, "nthread": args.threads})
     preds = df.select("sidx", "tidx", "p2").with_columns(
