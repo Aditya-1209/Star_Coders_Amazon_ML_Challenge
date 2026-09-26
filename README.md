@@ -6,6 +6,11 @@
 > ablations. Local holdout results are not Amazon leaderboard scores.
 > The remainder of this README describes the historical CatBoost baseline.
 
+The [completed r7 overnight result](reports/r7_overnight_result.md) is **96.74%
+local holdout macro F0.5**. Both test files passed the official validator.
+The 97–98 target was not reached locally; a new Amazon leaderboard score has
+not been measured.
+
 Match noisy business records from Source 2 and Source 3 to every Source 1 business.
 The pipeline produces both required TSVs and a verified submission ZIP, using only
 the challenge dataset. **You can run the included trained model immediately;

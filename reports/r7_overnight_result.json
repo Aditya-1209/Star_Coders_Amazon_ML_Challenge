@@ -1,0 +1,256 @@
+{
+  "metric": "macro F0.5, including singletons and unretrieved positives",
+  "selection_fold": 3,
+  "holdout_fold": 4,
+  "amazon_score": null,
+  "amazon_score_status": "requires submitting to Amazon; not measured locally",
+  "stage2_holdout": {
+    "macro_f05": 0.9639497422105437,
+    "pair_precision": 0.9940178247870991,
+    "pair_recall": 0.9193139373976384,
+    "anchors": 220507
+  },
+  "stage3_holdout": {
+    "macro_f05": 0.9673813245383697,
+    "pair_precision": 0.9950756287704186,
+    "pair_recall": 0.9309446910793795,
+    "anchors": 220507
+  },
+  "stage3_by_country": {
+    "India": {
+      "macro_f05": 0.9618425498683024,
+      "pair_precision": 0.994297643943054,
+      "pair_recall": 0.9216250935680734,
+      "anchors": 88068
+    },
+    "US": {
+      "macro_f05": 0.9710644451270444,
+      "pair_precision": 0.9955874369550995,
+      "pair_recall": 0.9371710598152475,
+      "anchors": 132439
+    }
+  },
+  "stage3_oracle": {
+    "macro_f05": 0.9809172574215875,
+    "pair_precision": 1.0,
+    "pair_recall": 0.953746676319686,
+    "anchors": 220507
+  },
+  "stage2_feature_trials": [
+    {
+      "profile": "baseline",
+      "fold3_macro_f05": 0.9630773700456954,
+      "threshold": 0.678105354309082
+    },
+    {
+      "profile": "enhanced",
+      "fold3_macro_f05": 0.9639125098781204,
+      "threshold": 0.692264199256897
+    }
+  ],
+  "stage3_feature_trials": [
+    {
+      "profile": "baseline",
+      "fold3_macro_f05": 0.9673498641099226,
+      "stage3_weight": 1.0,
+      "threshold": 0.6813567280769348,
+      "tuning_trials": [
+        {
+          "stage3_weight": 0.0,
+          "threshold": 0.692264199256897,
+          "macro_f05": 0.9639125098781204
+        },
+        {
+          "stage3_weight": 0.25,
+          "threshold": 0.6536543369293213,
+          "macro_f05": 0.9644939110176213
+        },
+        {
+          "stage3_weight": 0.5,
+          "threshold": 0.4852439761161804,
+          "macro_f05": 0.9652705563651894
+        },
+        {
+          "stage3_weight": 0.75,
+          "threshold": 0.6616102457046509,
+          "macro_f05": 0.9673420773296504
+        },
+        {
+          "stage3_weight": 1.0,
+          "threshold": 0.6813567280769348,
+          "macro_f05": 0.9673498641099226
+        }
+      ]
+    },
+    {
+      "profile": "enhanced",
+      "fold3_macro_f05": 0.967370226640033,
+      "stage3_weight": 1.0,
+      "threshold": 0.6926170587539673,
+      "tuning_trials": [
+        {
+          "stage3_weight": 0.0,
+          "threshold": 0.692264199256897,
+          "macro_f05": 0.9639125098781204
+        },
+        {
+          "stage3_weight": 0.25,
+          "threshold": 0.6775702834129333,
+          "macro_f05": 0.9644804469541338
+        },
+        {
+          "stage3_weight": 0.5,
+          "threshold": 0.48390498757362366,
+          "macro_f05": 0.9653275089614467
+        },
+        {
+          "stage3_weight": 0.75,
+          "threshold": 0.6560505032539368,
+          "macro_f05": 0.9673032278110942
+        },
+        {
+          "stage3_weight": 1.0,
+          "threshold": 0.6926170587539673,
+          "macro_f05": 0.967370226640033
+        }
+      ]
+    }
+  ],
+  "shift_check": {
+    "allow_enhanced": true,
+    "countries": {
+      "India": {
+        "training_pairs": 186055,
+        "validation_pairs": 45953,
+        "baseline_auc": 0.6715350753851972,
+        "enhanced_auc": 0.6704735045378949,
+        "allow_enhanced": true
+      },
+      "US": {
+        "training_pairs": 190747,
+        "validation_pairs": 48106,
+        "baseline_auc": 0.7195376323602501,
+        "enhanced_auc": 0.7192430632957812,
+        "allow_enhanced": true
+      }
+    },
+    "sample_seed": 91,
+    "grouped_validation_seed": 61,
+    "rule": "enhanced AUC <= max(0.75, baseline AUC + 0.02) in each labeled country",
+    "limitation": "France has no matching labels; this diagnostic cannot establish its accuracy"
+  },
+  "retrieval_audit": {
+    "evaluation_fold": 3,
+    "original_channels": {
+      "oracle": {
+        "macro_f05": 0.9783280207564646,
+        "pair_precision": 1.0,
+        "pair_recall": 0.9438971108903452,
+        "anchors": 220699
+      },
+      "country_oracles": {
+        "US": {
+          "macro_f05": 0.9822585563540199,
+          "pair_precision": 1.0,
+          "pair_recall": 0.9515313980848512,
+          "anchors": 132131
+        },
+        "India": {
+          "macro_f05": 0.9724642144264068,
+          "pair_precision": 1.0,
+          "pair_recall": 0.9324883769524108,
+          "anchors": 88568
+        }
+      },
+      "candidates_per_anchor": 67.33576500120073
+    },
+    "with_phonetic": {
+      "oracle": {
+        "macro_f05": 0.9791461728363288,
+        "pair_precision": 1.0,
+        "pair_recall": 0.9460934258455748,
+        "anchors": 220699
+      },
+      "country_oracles": {
+        "India": {
+          "macro_f05": 0.9730036593834204,
+          "pair_precision": 1.0,
+          "pair_recall": 0.9341142976544952,
+          "anchors": 88568
+        },
+        "US": {
+          "macro_f05": 0.9832635270643085,
+          "pair_precision": 1.0,
+          "pair_recall": 0.9541093989980752,
+          "anchors": 132131
+        }
+      },
+      "candidates_per_anchor": 69.25366675879818
+    },
+    "additional_true_pairs": 1678
+  },
+  "outputs": {
+    "matching_results.tsv": {
+      "bytes": 95262408,
+      "sha256": "4d7badf30fd952a8e2152c17817bf6d37ccbbaee3468922b7c445c31f723e09b"
+    },
+    "candidate_pairs.tsv": {
+      "bytes": 174989458,
+      "sha256": "599d037617d74ff5b0ce5bdbb0f8867b9a9fe130aac909758c7bebb404598a8d"
+    }
+  },
+  "run": {
+    "source_commit": "fa2e529",
+    "branch": "r7-improvements",
+    "started_utc": "2026-09-25T20:15:07.522585+00:00",
+    "finished_utc": "2026-09-25T23:39:58.639359+00:00",
+    "runner_elapsed_seconds": 12291.116774,
+    "timing_scope": "Detached runner starting at retrieval_audit; earlier interactive normalization, retrieval and probes excluded",
+    "device": "cpu",
+    "threads": 6,
+    "stage_seconds": {
+      "retrieval_audit": 5.0,
+      "features_train": 1717.9,
+      "block_test": 571.5,
+      "features_test": 1403.2,
+      "shift_check": 20.1,
+      "train": 2844.1,
+      "stage3_train": 3015.4,
+      "predict": 968.1,
+      "stage3_test": 1720.5,
+      "validate": 20.1,
+      "report": 5.0
+    },
+    "official_validation": {
+      "status": "PASS",
+      "id_checks": true,
+      "required_source1_rows": 1732544,
+      "valid_target_ids": 9969589,
+      "matching_rows": 1732544,
+      "candidate_rows": 1732544,
+      "matched_pairs": 5649320
+    },
+    "verification": "32 tests passed before the full run; output hashes rechecked after completion",
+    "selected_stage3_weight": 1.0,
+    "selected_threshold": 0.6926170587539673,
+    "country_thresholds": {}
+  },
+  "model_files": {
+    "stage1.json": {
+      "bytes": 33937526,
+      "sha256": "2a6009a95af5920d6aaad34ece981c9e196c9c33498bea4ed1a04b06d709f666"
+    },
+    "stage1_b.json": {
+      "bytes": 32384871,
+      "sha256": "c818308793212a9d4440309d8c2a6331e28e629a0d28a2c5d639aaacbfea4ee4"
+    },
+    "stage2.json": {
+      "bytes": 19964142,
+      "sha256": "0ad0926815d4d6fb0293e7e9b4c02174350f6a0657a78b04f9f40a2ff4d5b4c9"
+    },
+    "stage3.json": {
+      "bytes": 14947873,
+      "sha256": "4b91a7053a23d8245f40df6cb30d90d9c27bd68a834ed8eda1783b1e17e4a784"
+    }
+  }
+}

@@ -1,5 +1,9 @@
 # r7 accuracy experiment
 
+**Completed:** the [26 September CPU run](../reports/r7_overnight_result.md)
+scored 96.74% local holdout macro F0.5 and passed official test-file validation.
+This is below the 97–98 target; no new Amazon leaderboard score is available.
+
 This builds on `r7-improvements` at `4c2c603`. The team's Amazon score is about
 95; the goal is 97–98. **No new Amazon score is claimed.** The local metric is
 macro F0.5 per Source 1 business, not ordinary classification accuracy. France
