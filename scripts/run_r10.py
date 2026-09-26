@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -60,6 +61,7 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--work', type=Path, default=Path('work/r10'))
     p.add_argument('--dataset', type=Path, default=Path('student_resource/dataset'))
+    p.add_argument('--validator', type=Path, default=ROOT / 'student_resource/utils/validate_submission.py')
     p.add_argument('--output', type=Path, default=Path('output/r10'))
     p.add_argument('--encoder', type=Path, help='Read-only reuse of an R8 encoder trained ONLY on folds 0/1/8/9')
     p.add_argument('--device', choices=['cuda', 'cpu'], default='cuda')
@@ -68,6 +70,8 @@ def parser():
     p.add_argument('--ce-batch', type=int, default=16)
     p.add_argument('--ce-score-batch', type=int, default=128)
     p.add_argument('--ce-epochs', type=int, default=3)
+    p.add_argument('--encoder-pairs', type=int, default=1000000)
+    p.add_argument('--ce-train-businesses', type=int, default=180000)
     p.add_argument('--ce-accumulation', type=int, default=4)
     p.add_argument('--ce-checkpointing', action=argparse.BooleanOptionalAction, default=True,
                    help='activation checkpointing (saves VRAM, costs speed; off on 24 GB GPUs)')
@@ -111,12 +115,14 @@ def commands(args):
             w / f'key_{split}.parquet', w / f'key_{split}.json')
     encoder = args.encoder or w / 'neural_e5'
     if args.encoder is None:
-        add('encoder', module('neural', 'finetune', *data, '--model-dir', encoder, '--batch', 64, '--epochs', 1), encoder)
+        add('encoder', module('neural', 'finetune', *data, '--model-dir', encoder, '--batch', 64, '--epochs', 1,
+            '--pairs', args.encoder_pairs), encoder)
     for split in ('train', 'test'):
         add('encode_' + split, module('r10_retrieval', 'encode', '--split', split, '--model-dir', encoder,
             '--batch', args.encode_batch, '--device', args.device), *[w / 'emb' / f'{split}_{side}.npy' for side in ('s1', 'tg')], w / 'emb' / f'{split}.json')
         if args.ann == 'gpu-exact':  # exact top-k on the GPU: ~10 min instead of ~2 h, no approximation
-            add('ann_' + split, module('neural', 'block', '--split', split, '--k', args.neural_k), w / f'ncands_{split}.parquet')
+            add('ann_' + split, module('neural', 'block', '--split', split, '--k', args.neural_k,
+                '--device', args.device), w / f'ncands_{split}.parquet')
         else:
             add('ann_' + split, module('r10_retrieval', 'block', '--split', split, '--k', args.neural_k,
                 '--nprobe', args.nprobe, '--search-k', args.search_k, '--threads', args.threads), w / f'ncands_{split}.parquet', w / f'ann_{split}.json')
@@ -140,7 +146,7 @@ def commands(args):
             w / 'ce_tokens' / f'{split}.json')
     ceopts = ['--device', args.device, '--threads', str(min(args.threads, 8)), '--batch', str(args.ce_batch),
               '--score-batch', str(args.ce_score_batch), '--epochs', str(args.ce_epochs),
-              '--accumulation', str(args.ce_accumulation),
+              '--accumulation', str(args.ce_accumulation), '--train-businesses', str(args.ce_train_businesses),
               *([] if args.ce_checkpointing else ['--no-checkpointing'])]
     add('ce_train', module('r10_ce', 'train', *data, *ceopts), w / 'ce_model')
     for split in ('train', 'test'):
@@ -151,7 +157,7 @@ def commands(args):
     add('evaluate', module('r10', 'evaluate', *finalopts), w / 'metrics.json')
     add('inference', module('r10', 'inference', *finalopts), w / 'r10_test_predictions.parquet',
         args.output / 'candidate_pairs.tsv', args.output / 'matching_results.tsv')
-    add('validate', [py, str(ROOT / 'student_resource/utils/validate_submission.py'), '--matching', str(args.output / 'matching_results.tsv'),
+    add('validate', [py, str(args.validator), '--matching', str(args.output / 'matching_results.tsv'),
         '--candidate', str(args.output / 'candidate_pairs.tsv'), '--test-dir', str(args.dataset / 'test'), '--check-ids'])
     return stages
 
@@ -187,18 +193,32 @@ def preflight(args):
                 raise FileNotFoundError(f'Missing {split} source{side}')
     if not (args.dataset / 'train/train_ground_truth.tsv').exists():
         raise FileNotFoundError('Training ground truth missing')
-    if not (ROOT / 'student_resource/utils/validate_submission.py').exists():
-        raise FileNotFoundError('Copy the organizer validator to student_resource/utils/validate_submission.py')
+    if not args.validator.is_file():
+        raise FileNotFoundError(f'Official validator missing: {args.validator}')
     print(json.dumps({'versions': versions, 'free_gb': shutil.disk_usage(args.work).free / 1024**3}, indent=2))
     return versions
 
 
 def stop_child(child):
-    child.terminate()
+    # Feature workers inherit the process group: terminate the whole stage on Linux.
+    if os.name == 'posix':
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            child.wait()
+            return
+    else:
+        child.terminate()
     try:
         child.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        child.kill()
+        if os.name == 'posix':
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            child.kill()
         child.wait(timeout=10)
 
 
@@ -206,9 +226,10 @@ def main():
     p = parser()
     args = p.parse_args()
     if min(args.threads, args.rounds, args.ce_batch, args.ce_score_batch, args.ce_epochs, args.encode_batch,
-           args.nprobe, args.neural_k, args.search_k) < 1 or not 0 <= args.rescue_k <= args.neural_k or args.max_hours <= 0 or args.reserve_gb < 1:
+           args.nprobe, args.neural_k, args.search_k, args.ce_accumulation, args.encoder_pairs,
+           args.ce_train_businesses, args.shard_pairs) < 1 or args.neural_k >= 65535 or not 0 <= args.rescue_k <= args.neural_k or not 0 < args.max_hours <= 72 or args.reserve_gb < 1:
         p.error('Invalid counts, rescue size, storage reserve or deadline')
-    for name in ('work', 'dataset', 'output', 'encoder'):
+    for name in ('work', 'dataset', 'output', 'encoder', 'validator'):
         if getattr(args, name) is not None:
             setattr(args, name, getattr(args, name).resolve())
     if args.work == args.dataset or args.output == args.work or args.dataset.is_relative_to(args.work):
@@ -232,7 +253,7 @@ def main():
         identity = {'code': code_hash(), 'settings': config, 'versions': versions,
             'data': fingerprint([args.dataset / 'train', args.dataset / 'test']),
             'encoder': fingerprint([args.encoder]) if args.encoder else None,
-            'validator': fingerprint([ROOT / 'student_resource/utils/validate_submission.py'])}
+            'validator': fingerprint([args.validator])}
         if args.resume:
             state = json.loads(manifest.read_text())
             if state['identity'] != identity:
@@ -246,6 +267,9 @@ def main():
             'POLARS_MAX_THREADS': str(args.threads), 'OMP_NUM_THREADS': str(args.threads), 'OPENBLAS_NUM_THREADS': '1',
             'MKL_NUM_THREADS': '1', 'TOKENIZERS_PARALLELISM': 'false', 'PYTHONUTF8': '1', 'R10_NEURAL_DEVICE': args.device}
         deadline = time.monotonic() + args.max_hours * 3600
+        def interrupted(signum, frame):
+            raise KeyboardInterrupt(f'Runner interrupted by signal {signum}')
+        previous_sigterm = signal.signal(signal.SIGTERM, interrupted)
         try:
             for stage in commands(args):
                 command, outputs = commands(args)[stage]
@@ -264,12 +288,15 @@ def main():
                 print(f'{now()} {stage} -> {logpath}', flush=True)
                 started = time.monotonic()
                 with logpath.open('w', encoding='utf-8') as log:
-                    child = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
+                    child = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                             start_new_session=os.name == 'posix')
                     try:
                         while child.poll() is None:
                             time.sleep(2)
                             if time.monotonic() >= deadline:
                                 raise TimeoutError(f'{stage} reached R10 wall-time limit')
+                            if shutil.disk_usage(args.work).free < args.reserve_gb * 1024**3:
+                                raise RuntimeError(f'{stage}: free disk below reserve; add space before resuming')
                             state['stage_seconds'] = round(time.monotonic() - started, 1)
                             save(manifest, state)
                     except BaseException:
@@ -295,6 +322,8 @@ def main():
             save(manifest, state)
             save(args.work / 'result.json', {'status': 'failed', 'error': str(exc), 'finished': now()})
             raise
+        finally:
+            signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 def file_hash(path):

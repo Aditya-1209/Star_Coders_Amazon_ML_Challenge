@@ -106,8 +106,11 @@ np.testing.assert_array_equal(found, exact_topk(q, x, ids, 4))
                 (data / split).mkdir(parents=True)
                 (data / split / 'input.tsv').write_text('fixture')
             ready = root / 'ready'
+            validator = root / 'validator.py'
+            validator.write_text('# fixture validator')
             first = work / 'first.txt'
-            argv = ['run_r10.py', '--work', str(work), '--dataset', str(data), '--output', str(out), '--reserve-gb', '1']
+            argv = ['run_r10.py', '--work', str(work), '--dataset', str(data), '--output', str(out),
+                    '--validator', str(validator), '--reserve-gb', '1']
             create = 'from pathlib import Path; Path(' + repr(str(first)) + ').write_text("first")'
             second = 'from pathlib import Path; import sys; sys.exit(0 if Path(' + repr(str(ready)) + ').exists() else 2)'
             plan = {'first': ([sys.executable, '-c', create], [first]),
@@ -204,7 +207,8 @@ class R10PipelineTest(unittest.TestCase):
                 run('r10_retrieval', 'merge', '--split', split, '--k', 4)
                 run('run_features', '--split', split, '--dataset', dataset, '--enhanced', '--workers', 2, '--shard-pairs', 700)
             runtime = ['--model-dir', model, '--device', 'cpu', '--threads', 2, '--batch-rows', 100]
-            run('train', *runtime, '--dataset', dataset, '--neural', '--neural-rescue-k', 2, '--rounds', 8)
+            run('train', *runtime, '--dataset', dataset, '--neural', '--neural-rescue-k', 2, '--rounds', 8,
+                '--lookalike', '--record-competition')
             out = root / 'output'
             run('predict', *runtime, '--output', out / 'reference2')
             run('stage3', *runtime, '--dataset', dataset, '--rounds', 8, '--split', 'train', '--support-anchors', 25)
@@ -214,6 +218,10 @@ class R10PipelineTest(unittest.TestCase):
             self.assertIsInstance(emb.tg, np.memmap)
             with patch.dict(os.environ, {'R10_NEURAL_DEVICE': 'cpu'}):
                 np.testing.assert_allclose(emb.cos(np.array([0, 1]), np.array([0, 1])), [1, 1], atol=.002)
+            del emb  # release Windows memmap file handles before temporary-directory cleanup
+            graph_features = json.loads((model / 'stage3_metrics.json').read_text())['features']
+            self.assertIn('rc_name_gap_other', graph_features)
+            self.assertIn('la_house_unique', graph_features)
             for split in ('train', 'test'):
                 run('r10_ce', 'tokens', '--split', split, '--base-model', base, '--max-length', 32)
             sample = samples(work, dataset, TRAIN_FOLDS, 100)

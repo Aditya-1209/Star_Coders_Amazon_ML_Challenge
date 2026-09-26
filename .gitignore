@@ -24,3 +24,6 @@ submissions/
 work/
 
 .venv-r10/
+.venv-r12/
+.venv-r12-review/
+.venv-r12-review-linux/

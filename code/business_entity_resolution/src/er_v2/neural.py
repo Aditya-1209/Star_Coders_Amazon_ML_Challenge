@@ -135,42 +135,90 @@ def encode(work: Path, model_dir: Path, split: str, batch: int) -> None:
 
 
 # ------------------------------------------------------------------ neural blocking
-def block(work: Path, split: str, k: int, qbatch: int) -> None:
-    """Top-k nearest Source 2/3 records per business by cosine, within each country (GPU)."""
+def exact_batches(es, et, si, ti, k, qbatch, device="cuda", target_batch=None):
+    """Exhaustive top-k on stored embeddings; bound both axes of the score matrix.
+
+    CUDA retains the existing fp16 search precision. CPU uses fp32 for smoke
+    tests. Large target sets are tiled and their top-k lists merged exactly;
+    there is no ANN shortlist or reduction of the requested neighbour count.
+    """
     import torch
+    if not len(si) or not len(ti):
+        return
+    dtype = torch.float16 if device == "cuda" else torch.float32
+    element = 2 if device == "cuda" else 4
+    budget = 256 * 1024**2
+    if device == "cuda":
+        free, _ = torch.cuda.mem_get_info()
+        budget = min(2500000000, int(free * .15))
+        max_targets = max(1, int(free * .35) // (et.shape[1] * element))
+    else:
+        max_targets = 20000
+    tile = min(len(ti), target_batch or max_targets)
+    qb = max(1, min(qbatch, budget // (element * tile)))
+    kk = min(k, len(ti))
+    # The common L4 case fits one country's target matrix; avoid repeated copies.
+    full = torch.as_tensor(np.array(et[ti], copy=True), dtype=dtype, device=device) if tile == len(ti) else None
+    with torch.inference_mode():
+        for i in range(0, len(si), qb):
+            ids = si[i:i + qb]
+            q = torch.as_tensor(np.array(es[ids], copy=True), dtype=dtype, device=device)
+            best, selected = None, None
+            for start in range(0, len(ti), tile):
+                target_ids = ti[start:start + tile]
+                targets = full if full is not None else torch.as_tensor(
+                    np.array(et[target_ids], copy=True), dtype=dtype, device=device)
+                scores = q @ targets.T
+                values, positions = torch.topk(scores, min(kk, len(target_ids)), dim=1)
+                positions = positions + start
+                del scores
+                if best is not None:
+                    pool = torch.cat([best, values], dim=1)
+                    choices = torch.cat([selected, positions], dim=1)
+                    best, order = torch.topk(pool, min(kk, pool.shape[1]), dim=1)
+                    selected = torch.gather(choices, 1, order)
+                else:
+                    best, selected = values, positions
+            yield ids, best.float().cpu().numpy(), ti[selected.cpu().numpy()]
 
+
+def block(work: Path, split: str, k: int, qbatch: int, device: str = "cuda") -> None:
+    """Country-scoped exhaustive search; stream a crash-safe candidate parquet."""
+    import pyarrow.parquet as pq
     from .run_block import load_split
-
+    from .run_block import split_countries
     t0 = time.time()
-    s1, tg = load_split(work, split)
     es = np.load(work / "emb" / f"{split}_s1.npy", mmap_mode="r")
     et = np.load(work / "emb" / f"{split}_tg.npy", mmap_mode="r")
-    parts = []
-    for country in s1["country"].unique().sort():
-        si = s1.filter(pl.col("country") == country)["idx"].to_numpy()
-        ti = tg.filter(pl.col("country") == country)["idx"].to_numpy()
-        if len(ti) == 0:
-            continue
-        T = torch.from_numpy(np.ascontiguousarray(et[ti])).cuda()
-        kk = min(k, len(ti))
-        # the (queries x records) score matrix must fit in ~2.5 GB of VRAM (fp16)
-        qb = max(64, min(qbatch, int(2.5e9 / (2 * len(ti)))))
-        for i in range(0, len(si), qb):
-            q = torch.from_numpy(np.ascontiguousarray(es[si[i:i + qb]])).cuda()
-            val, pos = torch.topk(q @ T.T, kk, dim=1)
-            val, pos = val.float().cpu().numpy(), pos.cpu().numpy()
-            parts.append(pl.DataFrame({
-                "sidx": np.repeat(si[i:i + qb], kk).astype(np.uint32),
-                "tidx": ti[pos.ravel()].astype(np.uint32),
-                "ncos": val.ravel().astype(np.float32),
-                "nrank": np.tile(np.arange(1, kk + 1, dtype=np.uint16), len(q)),
-            }))
-        _log(t0, f"{split}/{country}: {len(si):,} businesses x {len(ti):,} records")
-        del T
-        torch.cuda.empty_cache()
-    out = pl.concat(parts)
-    out.write_parquet(work / f"ncands_{split}.parquet")
-    _log(t0, f"{split}: {len(out):,} neural candidate pairs -> ncands_{split}.parquet")
+    path = work / f"ncands_{split}.parquet"
+    temporary = path.with_suffix(".partial.parquet")
+    writer, count = None, 0
+    try:
+        for country in split_countries(work, split):
+            s1, tg = load_split(work, split, country, ["idx", "country"])
+            si, ti = s1["idx"].to_numpy(), tg["idx"].to_numpy()
+            for ids, val, targets in exact_batches(es, et, si, ti, k, qbatch, device):
+                kk = targets.shape[1]
+                frame = pl.DataFrame({
+                    "sidx": np.repeat(ids, kk).astype(np.uint32),
+                    "tidx": targets.ravel().astype(np.uint32), "ncos": val.ravel(),
+                    "nrank": np.tile(np.arange(1, kk + 1, dtype=np.uint16), len(ids)),
+                })
+                if writer is None:
+                    writer = pq.ParquetWriter(temporary, frame.to_arrow().schema, compression="zstd")
+                writer.write_table(frame.to_arrow())
+                count += len(frame)
+            _log(t0, f"{split}/{country}: {len(si):,} businesses x {len(ti):,} records")
+    finally:
+        if writer is not None:
+            writer.close()
+        # Windows locks the files while np.memmap objects are alive.
+        del es, et
+    if writer is None:
+        pl.DataFrame(schema={"sidx": pl.UInt32, "tidx": pl.UInt32, "ncos": pl.Float32,
+                             "nrank": pl.UInt16}).write_parquet(temporary)
+    temporary.replace(path)
+    _log(t0, f"{split}: {count:,} neural candidate pairs -> ncands_{split}.parquet")
 
 
 # ------------------------------------------------------------------ pair scores
@@ -348,14 +396,17 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=3e-5)
     ap.add_argument("--k", type=int, default=32)
     ap.add_argument("--qbatch", type=int, default=4096)
+    ap.add_argument("--device", choices=["cuda", "cpu"], default="cuda")
     args = ap.parse_args()
+    if min(args.pairs, args.batch, args.epochs, args.k, args.qbatch) < 1 or args.k >= 65535 or not args.lr > 0:
+        ap.error("Counts must be positive; k must fit uint16; learning rate must be positive")
     work = Path(args.work)
     if args.cmd == "finetune":
         finetune(work, Path(args.dataset), Path(args.model_dir), args.pairs, args.batch, args.epochs, args.lr)
     elif args.cmd == "encode":
         encode(work, Path(args.model_dir), args.split, batch=max(args.batch, 512))
     elif args.cmd == "block":
-        block(work, args.split, args.k, args.qbatch)
+        block(work, args.split, args.k, args.qbatch, args.device)
     elif args.cmd == "merge":
         merge_candidates(work, args.split, args.k)
     elif args.cmd == "ce_finetune":

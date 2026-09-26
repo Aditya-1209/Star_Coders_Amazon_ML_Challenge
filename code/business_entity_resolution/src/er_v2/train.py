@@ -159,8 +159,8 @@ LOOKALIKE_FEATURES = ["la_same_name", "la_n_same_name", "la_addr_rank_same", "la
                       "la_name_gap", "la_n_house_eq", "la_house_unique"]
 
 
-def lookalike_features(df: pl.DataFrame) -> pl.DataFrame:
-    if not LOOKALIKE["on"] or df.is_empty() or "core_tset" not in df.columns:
+def lookalike_features(df: pl.DataFrame, enabled: bool | None = None) -> pl.DataFrame:
+    if not (LOOKALIKE["on"] if enabled is None else enabled) or df.is_empty() or "core_tset" not in df.columns:
         return df
     same = pl.col("core_tset") >= 90
     house = pl.col("house_equal").cast(pl.Int8) if "house_equal" in df.columns else pl.col("first_num_eq").cast(pl.Int8)
@@ -276,10 +276,15 @@ RECORD_COMPETITION = ["rc_n_claim", "rc_n_name90", "rc_name_rank", "rc_name_gap_
 
 
 def record_competition(folder: Path, survivors: pl.DataFrame) -> pl.DataFrame:
-    keys = survivors.select("sidx", "tidx")
-    parts = [pl.read_parquet(p, columns=["sidx", "tidx", "core_tset", "addr_tset"]).join(
-                 keys, on=["sidx", "tidx"], how="semi") for p in feature_parts(folder)]
+    keys = ContextIndex(survivors.select("sidx", "tidx"))
+    parts = [keys.attach(pl.read_parquet(p, columns=["sidx", "tidx", "core_tset", "addr_tset"]))
+             for p in feature_parts(folder)]
     x = pl.concat(parts)
+    return record_competition_frame(x)
+
+
+def record_competition_frame(x: pl.DataFrame) -> pl.DataFrame:
+    """Label-free competition over the complete candidate set, never per shard."""
     top = x.group_by("tidx").agg(
         n1=pl.col("core_tset").top_k(2).max(), n2=pl.col("core_tset").top_k(2).min(),
         a1=pl.col("addr_tset").top_k(2).max(), a2=pl.col("addr_tset").top_k(2).min(), cnt=pl.len())

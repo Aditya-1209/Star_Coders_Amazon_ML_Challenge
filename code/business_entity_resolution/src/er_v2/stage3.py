@@ -33,7 +33,8 @@ BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc"
 
 def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log, neural: bool = False,
           batch_rows: int = BATCH_ROWS, support_anchors: int = 100_000, workers: int = DEFAULT_THREADS,
-          prune_hops: bool = True, block_chunk: int = 2_000) -> pl.DataFrame:
+          prune_hops: bool = True, block_chunk: int = 2_000,
+          lookalike: bool = False, record_competition: bool = False) -> pl.DataFrame:
     emb = None
     if neural:
         from .neural import Embeddings
@@ -43,7 +44,8 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log, ne
         for i, country in enumerate(split_countries(work, split)):
             log(f"building graph for {country}")
             frame = _build_country(split, work, stage2, feats_dir, log, batch_rows,
-                                   support_anchors, workers, prune_hops, block_chunk, country, emb)
+                                   support_anchors, workers, prune_hops, block_chunk, country, emb,
+                                   lookalike, record_competition)
             path = Path(tmp) / f"{i}.parquet"
             frame.write_parquet(path)
             paths.append(path)
@@ -53,7 +55,8 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log, ne
 
 
 def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anchors,
-                   workers, prune_hops, block_chunk, country, emb=None):
+                   workers, prune_hops, block_chunk, country, emb=None,
+                   lookalike=False, record_competition=False):
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
     s1, tg = load_split(work, split, country)
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
@@ -129,12 +132,22 @@ def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anch
     del right
     gc.collect()
     out = base.join(pairs, on=["sidx", "tidx"], how="left").join(sup, on=["sidx", "tidx"], how="left")
+    # Recompute over direct + hop candidates, consistently on train and test.
+    # Stage-2 values cannot be copied: new hop pairs change the competitors.
+    out = competition_features(out, lookalike, record_competition)
     if prune_hops:
         before = len(out)
         out = out.filter(hop_keep())
         log(f"two-hop support filter: {before:,} -> {len(out):,} candidates")
     log(f"support features done, {out.width} columns")
     return out
+
+
+def competition_features(df, lookalike=False, record_competition=False):
+    from .train import lookalike_features, record_competition_frame
+    if record_competition:
+        df = df.join(record_competition_frame(df), on=["sidx", "tidx"], how="left", validate="1:1")
+    return lookalike_features(df, enabled=lookalike)
 
 
 def feature_cols(df: pl.DataFrame, profile: str = "enhanced") -> list[str]:
@@ -170,6 +183,8 @@ def main() -> None:
     build_options = {"batch_rows": args.batch_rows, "support_anchors": args.support_anchors,
                      "workers": args.threads, "block_chunk": args.block_chunk}
     stage2_meta = json.loads((mdir / "metrics.json").read_text(encoding="utf-8"))
+    build_options.update(lookalike=bool(stage2_meta.get("lookalike")),
+                         record_competition=bool(stage2_meta.get("record_competition")))
     if stage2_meta.get("ghost_frac", 0) > 0:
         raise ValueError("Stage 3 does not yet support ghost training; use a non-ghost stage-2 model")
     if stage2_meta.get("feature_version") != FEATURE_VERSION:
