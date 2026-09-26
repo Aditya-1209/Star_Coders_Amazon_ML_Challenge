@@ -61,7 +61,7 @@ export POLARS_MAX_THREADS=30 OMP_NUM_THREADS=30
 
 HOURS=${R12_MAX_HOURS:-11}
 ARGS=(--work work/r12 --output output/r12 --dataset "$SR/dataset" --validator "$SR/utils/validate_submission.py"
-      --device cuda --threads "${R12_THREADS:-30}" --max-hours "$HOURS" --reserve-gb 20
+      --device cuda --threads "${R12_THREADS:-30}" --max-hours "$HOURS" --reserve-gb 20 --target-local .99
       --encoder-pairs "${R12_ENCODER_PAIRS:-2000000}" --ce-train-businesses "${R12_CE_TRAIN_BUSINESSES:-250000}"
       --ann gpu-exact --neural-k 24 --rescue-k 8 --r11-features
       --shard-pairs 6000000 --encode-batch 1024

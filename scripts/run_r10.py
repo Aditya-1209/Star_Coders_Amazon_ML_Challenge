@@ -86,6 +86,7 @@ def parser():
     p.add_argument('--neural-k', type=int, default=24)
     p.add_argument('--rescue-k', type=int, default=8)
     p.add_argument('--max-hours', type=float, default=24)
+    p.add_argument('--target-local', type=float, default=.975, help='reporting objective only; never changes selection')
     p.add_argument('--reserve-gb', type=float, default=12)
     p.add_argument('--resume', action='store_true')
     p.add_argument('--plan', action='store_true')
@@ -151,7 +152,8 @@ def commands(args):
     add('ce_train', module('r10_ce', 'train', *data, *ceopts), w / 'ce_model')
     for split in ('train', 'test'):
         add('ce_score_' + split, module('r10_ce', 'score', '--split', split, *ceopts), w / f'ce_{split}.parquet')
-    finalopts = [*data, '--output', str(args.output), '--device', args.device, '--threads', str(args.threads), '--rounds', str(args.rounds)]
+    finalopts = [*data, '--output', str(args.output), '--device', args.device, '--threads', str(args.threads),
+                 '--rounds', str(args.rounds), '--target-local', str(args.target_local)]
     add('fit', module('r10', 'fit', *finalopts), w / 'r10_models.json', m / 'r10_pair.json', m / 'r10_business.json')
     add('select', module('r10', 'select', *finalopts), w / 'selection.json')
     add('evaluate', module('r10', 'evaluate', *finalopts), w / 'metrics.json')
@@ -227,7 +229,7 @@ def main():
     args = p.parse_args()
     if min(args.threads, args.rounds, args.ce_batch, args.ce_score_batch, args.ce_epochs, args.encode_batch,
            args.nprobe, args.neural_k, args.search_k, args.ce_accumulation, args.encoder_pairs,
-           args.ce_train_businesses, args.shard_pairs) < 1 or args.neural_k >= 65535 or not 0 <= args.rescue_k <= args.neural_k or not 0 < args.max_hours <= 72 or args.reserve_gb < 1:
+           args.ce_train_businesses, args.shard_pairs) < 1 or args.neural_k >= 65535 or not 0 <= args.rescue_k <= args.neural_k or not 0 < args.max_hours <= 72 or args.reserve_gb < 1 or not 0 < args.target_local <= 1:
         p.error('Invalid counts, rescue size, storage reserve or deadline')
     for name in ('work', 'dataset', 'output', 'encoder', 'validator'):
         if getattr(args, name) is not None:
@@ -313,7 +315,7 @@ def main():
                 'stage_seconds': {k: v['seconds'] for k, v in state['completed'].items()}}
             save(args.work / 'result.json', result)
             value = metrics['local_fold4']['macro_f05']
-            (args.work / 'result.md').write_text(f'R10 complete. Official TSV validation: PASS.\n\nSelected: {metrics["selected"]}. Local fold-4 macro F0.5: {value:.6f}.\n\n97.5 local target met: {value >= .975}. Amazon leaderboard score: not measured.\n', encoding='utf-8')
+            (args.work / 'result.md').write_text(f'Run complete. Official TSV validation: PASS.\n\nSelected: {metrics["selected"]}. Local fold-4 macro F0.5: {value:.6f}.\n\n{args.target_local:.1%} local target met: {value >= args.target_local}. Amazon leaderboard score: not measured.\n', encoding='utf-8')
             state.update(status='complete', finished=now())
             save(manifest, state)
             print(f'Complete: {args.work / "result.md"}')

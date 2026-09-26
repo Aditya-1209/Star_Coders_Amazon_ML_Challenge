@@ -38,7 +38,10 @@ def samples(work, dataset, folds, limit, negatives=4):
     ann = ann.join(truth, on=['sidx', 'tidx'], how='anti').sort('sidx', 'nrank', 'tidx').group_by('sidx', maintain_order=True).head(max(1, negatives // 2))
     random = neg.with_columns(key=pl.struct('sidx', 'tidx').hash(seed=88)).sort('sidx', 'key').group_by('sidx', maintain_order=True).head(1)
     neg = pl.concat([x.select('sidx', 'tidx') for x in (lexical, ann, random)]).unique().with_columns(label=pl.lit(0, pl.Int8))
-    pos = truth.sort('sidx', 'tidx').group_by('sidx', maintain_order=True).head(4).with_columns(label=pl.lit(1, pl.Int8))
+    # Business sampling already bounds size. Keeping the first four targets
+    # discards valid variants and systematically favours Source 2 (lower IDs).
+    # Retain every labelled positive; per-business weights still balance loss.
+    pos = truth.with_columns(label=pl.lit(1, pl.Int8))
     result = pl.concat([pos, neg]).sort('sidx', 'tidx')
     if result.is_empty() or result['label'].n_unique() < 2:
         raise ValueError('Cross-encoder needs both labels in its train/validation business sample')
@@ -91,12 +94,15 @@ class PairTokens:
     def batch(self, frame, device, swap=False, drop_address=False):
         tok = self.tokenizer
         examples = []
-        for s, t in frame.select('sidx', 'tidx').iter_rows():
+        drop = np.broadcast_to(np.asarray(drop_address, dtype=bool), (len(frame),))
+        for i, (s, t) in enumerate(frame.select('sidx', 'tidx').iter_rows()):
             a = self.arrays['s1'][s, :self.lengths['s1'][s]].tolist()
             b = self.arrays['tg'][t, :self.lengths['tg'][t]].tolist()
-            if drop_address:
-                a = a[:a.index(tok.sep_token_id)] if tok.sep_token_id in a else a
-                b = b[:b.index(tok.sep_token_id)] if tok.sep_token_id in b else b
+            if drop[i]:
+                # Real data has complete Source 1 addresses and missing target
+                # addresses. Preserve the field SEP exactly as cache_tokens
+                # does for a naturally blank target, including after swapping.
+                b = b[:b.index(tok.sep_token_id) + 1] if tok.sep_token_id in b else b
             if swap:
                 a, b = b, a
             # Transformers 5 removed build_inputs_with_special_tokens. E5-small
@@ -112,6 +118,46 @@ class PairTokens:
                                           if special == 3 else [0] * len(ids))
             examples.append(item)
         return tok.pad(examples, padding=True, pad_to_multiple_of=8, return_tensors='pt').to(device)
+
+    def pair_lengths(self, frame):
+        return (self.lengths['s1'][frame['sidx'].to_numpy()].astype(np.int32)
+                + self.lengths['tg'][frame['tidx'].to_numpy()].astype(np.int32))
+
+
+def score_logits(model, cache, frame, device, batch):
+    """Length-bucket inference, restored to input order; retry CUDA OOM losslessly.
+
+    Cache a reduced batch ceiling across parquet windows and validation epochs.
+    Never truncate text, skip a pair, or move computation silently onto the CPU.
+    """
+    import torch
+    order = np.argsort(cache.pair_lengths(frame), kind='stable')
+    values = np.empty(len(frame), dtype=np.float32)
+    size = min(batch, getattr(cache, 'score_batch_limit', batch))
+    start = 0
+    with torch.inference_mode():
+        while start < len(order):
+            ids = order[start:start + size]
+            try:
+                with torch.autocast(device_type=device, dtype=torch.float16, enabled=device == 'cuda'):
+                    logits = model(**cache.batch(frame[ids], device)).logits.reshape(-1)
+                values[ids] = logits.float().cpu().numpy()
+                del logits
+            except torch.cuda.OutOfMemoryError:
+                if device != 'cuda' or len(ids) == 1:
+                    raise
+                size = max(1, len(ids) // 2)
+                cache.score_batch_limit = size
+                print(f'CE inference CUDA OOM: retrying the same pairs at batch {size}', flush=True)
+            else:
+                start += len(ids)
+                continue
+            # Outside the exception handler: release its traceback before retry.
+            gc.collect()
+            torch.cuda.empty_cache()
+    if not np.isfinite(values).all():
+        raise RuntimeError('Non-finite cross-encoder scores')
+    return values
 
 
 def weighted_bce(logits, labels, weights):
@@ -149,8 +195,10 @@ def fit_model(args, train, valid):
         batches = math.ceil(len(train) / args.batch)
         for j in range(batches):
             part = train[order[j * args.batch:(j + 1) * args.batch]]
-            # Random order and occasional address removal teach robustness to missing fields.
-            inputs = cache.batch(part, args.device, swap=bool(rng.integers(2)), drop_address=rng.random() < .10)
+            # Independent target-address dropout matches the missing-field case;
+            # swapping still prevents the model relying on pair orientation.
+            inputs = cache.batch(part, args.device, swap=bool(rng.integers(2)),
+                                 drop_address=rng.random(len(part)) < .10)
             y = torch.tensor(part['label'].to_numpy(), device=args.device, dtype=torch.float32)
             w = torch.tensor(part['w'].to_numpy(), device=args.device)
             with torch.autocast(device_type=args.device, dtype=torch.float16, enabled=args.device == 'cuda'):
@@ -174,16 +222,9 @@ def fit_model(args, train, valid):
             if j % 200 == 0:
                 print(f'CE epoch {epoch + 1}: {rows:,}/{len(train):,}, loss {loss_sum / rows:.5f}', flush=True)
         model.eval()
-        total, count = 0., 0
-        with torch.inference_mode():
-            for part in valid.iter_slices(args.score_batch):
-                with torch.autocast(device_type=args.device, dtype=torch.float16, enabled=args.device == 'cuda'):
-                    logits = model(**cache.batch(part, args.device)).logits.reshape(-1)
-                y = torch.tensor(part['label'].to_numpy(), device=args.device, dtype=torch.float32)
-                w = torch.tensor(part['w'].to_numpy(), device=args.device)
-                total += float(weighted_bce(logits, y, w)) * len(part)
-                count += len(part)
-        value = total / count
+        logits = torch.from_numpy(score_logits(model, cache, valid, args.device, args.score_batch))
+        value = float(weighted_bce(logits, torch.tensor(valid['label'].to_numpy()),
+                                   torch.tensor(valid['w'].to_numpy())))
         if not np.isfinite(value):
             raise RuntimeError('Non-finite CE validation loss')
         history.append({'epoch': epoch + 1, 'train_loss': loss_sum / rows, 'fold9_loss': value})
@@ -199,6 +240,8 @@ def fit_model(args, train, valid):
     save_json(target / 'training.json', {'base_model': args.base_model, 'revision': BASE_REVISION if args.base_model == BASE_MODEL else None, 'train_folds': TRAIN_FOLDS,
         'early_stopping_folds': VALID_FOLDS, 'train_pairs': len(train), 'valid_pairs': len(valid),
         'max_length': args.max_length, 'batch': args.batch, 'accumulation': args.accumulation,
+        'positive_sampling': 'all positives for selected businesses',
+        'address_dropout': {'probability': .10, 'side': 'target', 'per_pair': True, 'preserve_field_separator': True},
         'seed': args.seed, 'history': history, 'calibrated_probability': False})
 
 
@@ -226,12 +269,7 @@ def score(args):
             frame = pl.from_arrow(batch).filter(hop_keep()).select('sidx', 'tidx')
             if frame.is_empty():
                 continue
-            values = []
-            with torch.inference_mode():
-                for part in frame.iter_slices(args.score_batch):
-                    with torch.autocast(device_type=args.device, dtype=torch.float16, enabled=args.device == 'cuda'):
-                        logits = model(**cache.batch(part, args.device)).logits.reshape(-1).float()
-                    values.extend(logits.cpu().tolist())
+            values = score_logits(model, cache, frame, args.device, args.score_batch)
             result = frame.with_columns(ce_logit=pl.Series(values, dtype=pl.Float32))
             if not np.isfinite(result['ce_logit'].to_numpy()).all():
                 raise RuntimeError('Non-finite cross-encoder scores')

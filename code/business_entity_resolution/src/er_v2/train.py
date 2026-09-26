@@ -184,13 +184,14 @@ class ContextIndex:
         self.frame = context.sort("sidx", "tidx")
         self.ids = self.frame["sidx"].to_numpy()
 
-    def attach(self, frame: pl.DataFrame) -> pl.DataFrame:
+    def attach(self, frame: pl.DataFrame, include_lookalike: bool = True) -> pl.DataFrame:
         if frame.is_empty():
             return frame.join(self.frame.head(0), on=["sidx", "tidx"], how="inner")
         start = int(np.searchsorted(self.ids, frame["sidx"].min(), side="left"))
         stop = int(np.searchsorted(self.ids, frame["sidx"].max(), side="right"))
-        return lookalike_features(frame.join(self.frame.slice(start, stop - start), on=["sidx", "tidx"],
-                                             how="inner", maintain_order="left"))
+        out = frame.join(self.frame.slice(start, stop - start), on=["sidx", "tidx"],
+                         how="inner", maintain_order="left")
+        return lookalike_features(out) if include_lookalike else out
 
 
 def excluded_sidx(work: Path, countries: list[str]) -> pl.Series | None:
@@ -276,11 +277,16 @@ RECORD_COMPETITION = ["rc_n_claim", "rc_n_name90", "rc_name_rank", "rc_name_gap_
 
 
 def record_competition(folder: Path, survivors: pl.DataFrame) -> pl.DataFrame:
+    return record_competition_frame(record_competition_inputs(folder, survivors))
+
+
+def record_competition_inputs(folder: Path, survivors: pl.DataFrame) -> pl.DataFrame:
+    """Read only pair keys and similarities, never labels, for global context."""
     keys = ContextIndex(survivors.select("sidx", "tidx"))
-    parts = [keys.attach(pl.read_parquet(p, columns=["sidx", "tidx", "core_tset", "addr_tset"]))
+    parts = [keys.attach(pl.read_parquet(p, columns=["sidx", "tidx", "core_tset", "addr_tset"]),
+                         include_lookalike=False)
              for p in feature_parts(folder)]
-    x = pl.concat(parts)
-    return record_competition_frame(x)
+    return pl.concat(parts)
 
 
 def record_competition_frame(x: pl.DataFrame) -> pl.DataFrame:

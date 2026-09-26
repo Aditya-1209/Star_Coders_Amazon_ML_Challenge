@@ -34,18 +34,24 @@ BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc"
 def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log, neural: bool = False,
           batch_rows: int = BATCH_ROWS, support_anchors: int = 100_000, workers: int = DEFAULT_THREADS,
           prune_hops: bool = True, block_chunk: int = 2_000,
-          lookalike: bool = False, record_competition: bool = False) -> pl.DataFrame:
+          lookalike: bool = False, record_competition: bool = False,
+          competition_pairs: pl.DataFrame | None = None) -> pl.DataFrame:
     emb = None
     if neural:
         from .neural import Embeddings
         emb = Embeddings(work, split)
+    record_pool = None
+    if record_competition and competition_pairs is not None:
+        from .train import record_competition_inputs
+        record_pool = record_competition_inputs(feats_dir, competition_pairs)
+        log(f"record competition: {len(record_pool):,} label-free direct pairs from all businesses")
     with TemporaryDirectory(prefix="graph-", dir=work) as tmp:
         paths = []
         for i, country in enumerate(split_countries(work, split)):
             log(f"building graph for {country}")
             frame = _build_country(split, work, stage2, feats_dir, log, batch_rows,
                                    support_anchors, workers, prune_hops, block_chunk, country, emb,
-                                   lookalike, record_competition)
+                                   lookalike, record_competition, record_pool)
             path = Path(tmp) / f"{i}.parquet"
             frame.write_parquet(path)
             paths.append(path)
@@ -56,7 +62,7 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log, ne
 
 def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anchors,
                    workers, prune_hops, block_chunk, country, emb=None,
-                   lookalike=False, record_competition=False):
+                   lookalike=False, record_competition=False, record_pool=None):
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
     s1, tg = load_split(work, split, country)
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
@@ -134,7 +140,7 @@ def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anch
     out = base.join(pairs, on=["sidx", "tidx"], how="left").join(sup, on=["sidx", "tidx"], how="left")
     # Recompute over direct + hop candidates, consistently on train and test.
     # Stage-2 values cannot be copied: new hop pairs change the competitors.
-    out = competition_features(out, lookalike, record_competition)
+    out = competition_features(out, lookalike, record_competition, record_pool)
     if prune_hops:
         before = len(out)
         out = out.filter(hop_keep())
@@ -143,10 +149,19 @@ def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anch
     return out
 
 
-def competition_features(df, lookalike=False, record_competition=False):
+def competition_features(df, lookalike=False, record_competition=False, record_pool=None):
     from .train import lookalike_features, record_competition_frame
     if record_competition:
-        df = df.join(record_competition_frame(df), on=["sidx", "tidx"], how="left", validate="1:1")
+        pool = df.select("sidx", "tidx", "core_tset", "addr_tset")
+        if record_pool is not None:
+            # Graph training uses only folds 3/4/6/7. Other businesses must
+            # still compete for records, just as in r11 stage 2 and at test.
+            # Add their direct-pair similarities, with no labels or scores.
+            others = (record_pool.select(pool.columns)
+                      .join(df.select("tidx").unique(), on="tidx", how="semi")
+                      .join(df.select("sidx", "tidx"), on=["sidx", "tidx"], how="anti"))
+            pool = pl.concat([pool, others], how="vertical_relaxed")
+        df = df.join(record_competition_frame(pool), on=["sidx", "tidx"], how="left", validate="1:1")
     return lookalike_features(df, enabled=lookalike)
 
 
@@ -193,10 +208,11 @@ def main() -> None:
     if args.split == "train":
         from .run_features import ground_truth_pairs
         st2 = pl.read_parquet(work / f"stage2_train{tag}.parquet").with_columns(fold_expr())
+        competition_pairs = st2.select("sidx", "tidx") if build_options["record_competition"] else None
         keep = TRAIN_FOLDS + [TUNE_FOLD, HOLD_FOLD]
         st2 = st2.filter(pl.col("fold").is_in(keep)).drop("label", "fold")
         df = build("train", work, st2, work / "feats_train", log, neural=bool(stage2_meta.get("neural")),
-                   prune_hops=False, **build_options)
+                   prune_hops=False, competition_pairs=competition_pairs, **build_options)
         s1, tg = load_split(work, "train", columns=["idx", "entity_id", "country"])
         truth = ground_truth_pairs(Path(args.dataset), s1, tg)
         df = df.join(truth.with_columns(label=pl.lit(1, pl.Int8)), on=["sidx", "tidx"], how="left")

@@ -40,16 +40,20 @@ def attach_ce(frame, scores):
     keys = ['sidx', 'tidx']
     if scores.select(keys).n_unique() != len(scores):
         raise ValueError('Duplicate cross-encoder pair keys')
-    out = frame.join(scores, on=keys, how='left', validate='1:1')
-    if out['ce_logit'].null_count() or not np.isfinite(out['ce_logit'].to_numpy()).all():
+    if scores['ce_logit'].null_count() or not np.isfinite(scores['ce_logit'].to_numpy()).all():
         raise ValueError('Missing/non-finite cross-encoder predictions; rerun score stage')
-    # Competition features use scores, never labels or corpus size.
-    out = out.sort('sidx', 'tidx')
-    return out.with_columns(
+    # Compute competition BEFORE selecting fitting/tuning/reporting folds.
+    # Otherwise the same pair changes features between fit (6/7/3), select
+    # (3), evaluate (4), and inference (all). Scores contain no labels.
+    context = scores.sort('sidx', 'tidx').with_columns(
         ce_rank_s=pl.col('ce_logit').rank('ordinal', descending=True).over('sidx').cast(pl.UInt16),
         ce_gap_s=(pl.col('ce_logit').max().over('sidx') - pl.col('ce_logit')).cast(pl.Float32),
         ce_rank_t=pl.col('ce_logit').rank('ordinal', descending=True).over('tidx').cast(pl.UInt16),
         ce_gap_t=(pl.col('ce_logit').max().over('tidx') - pl.col('ce_logit')).cast(pl.Float32))
+    out = frame.join(context, on=keys, how='left', validate='1:1')
+    if out['ce_logit'].null_count():
+        raise ValueError('Missing/non-finite cross-encoder predictions; rerun score stage')
+    return out.sort('sidx', 'tidx')
 
 
 def frame_for(args, split, folds=None):
@@ -57,8 +61,6 @@ def frame_for(args, split, folds=None):
     if folds is not None:
         source = source.filter(pl.col('fold').is_in(folds))
     scores = pl.scan_parquet(args.work / f'ce_{split}.parquet')
-    if folds is not None:
-        scores = scores.filter(fold_expr().is_in(folds))
     return attach_ce(source.collect(engine='streaming'), scores.collect(engine='streaming'))
 
 
@@ -205,12 +207,12 @@ def evaluate(args):
     report = {'version': VERSION, 'selected': selection['selected'], 'local_fold4': metrics,
         'reference_fold4': macro_f05(baseline, target, country['sidx']),
         'candidate_oracle_fold4': macro_f05(scores.join(target, on=['sidx', 'tidx']), target, country['sidx']),
-        'by_country': by_country(chosen, target, country), 'target_local': .975,
-        'target_met_locally': metrics['macro_f05'] >= .975, 'amazon_score': None,
+        'by_country': by_country(chosen, target, country), 'target_local': args.target_local,
+        'target_met_locally': metrics['macro_f05'] >= args.target_local, 'amazon_score': None,
         'user_reported_r8': {'local': .956, 'online': .954}, 'selection': selection,
         'limitations': ['No measured France score: training has no France labels.',
             'Rebuilt R8-style reference uses the R10 candidates, encoder and rescue rule; it is not the old submitted artifact.',
-            'Target 97.5 is an objective, not a guaranteed or measured leaderboard result.']}
+            'The local target is a reporting objective, not a guaranteed or measured leaderboard result.']}
     save_json(args.work / 'metrics.json', report)
     print(json.dumps(report, indent=2), flush=True)
 
@@ -239,8 +241,9 @@ def main():
     p.add_argument('--rounds', type=int, default=1400)
     p.add_argument('--batch-rows', type=int, default=50000)
     p.add_argument('--minimum-gain', type=float, default=.0005)
+    p.add_argument('--target-local', type=float, default=.975)
     args = p.parse_args()
-    if min(args.threads, args.rounds, args.batch_rows) < 1 or args.minimum_gain < 0:
+    if min(args.threads, args.rounds, args.batch_rows) < 1 or args.minimum_gain < 0 or not 0 < args.target_local <= 1:
         p.error('Invalid runtime counts or gain')
     {'fit': fit_final, 'select': select, 'evaluate': evaluate, 'inference': inference}[args.stage](args)
 

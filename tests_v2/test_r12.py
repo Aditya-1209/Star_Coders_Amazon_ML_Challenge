@@ -81,17 +81,18 @@ class R12Tests(unittest.TestCase):
     def test_vm_profile_plan_propagates_data_limits_and_device(self):
         args = run_r10.parser().parse_args(['--encoder-pairs', '2000000', '--ce-train-businesses', '250000',
             '--ann', 'gpu-exact', '--r11-features', '--dataset', '/other/student_resource/dataset',
-            '--validator', '/other/student_resource/utils/validate_submission.py'])
+            '--validator', '/other/student_resource/utils/validate_submission.py', '--target-local', '.99'])
         stages = run_r10.commands(args)
         self.assertEqual(stages['encoder'][0][stages['encoder'][0].index('--pairs') + 1], '2000000')
         self.assertEqual(stages['ce_train'][0][stages['ce_train'][0].index('--train-businesses') + 1], '250000')
         self.assertIn('--device', stages['ann_train'][0])
         self.assertEqual(stages['validate'][0][1], str(args.validator))
         self.assertIn('--record-competition', stages['train'][0])
+        self.assertEqual(stages['evaluate'][0][stages['evaluate'][0].index('--target-local') + 1], '0.99')
         self.assertLess(list(stages).index('select'), list(stages).index('evaluate'))
 
     def test_invalid_accumulation_shard_size_and_neighbour_count_fail_before_preflight(self):
-        for option, value in (('--ce-accumulation', '0'), ('--shard-pairs', '0'), ('--neural-k', '65535')):
+        for option, value in (('--ce-accumulation', '0'), ('--shard-pairs', '0'), ('--neural-k', '65535'), ('--target-local', '1.1')):
             with self.subTest(option=option), patch.object(sys, 'argv', ['run_r10.py', option, value, '--plan']):
                 with self.assertRaises(SystemExit):
                     run_r10.main()
