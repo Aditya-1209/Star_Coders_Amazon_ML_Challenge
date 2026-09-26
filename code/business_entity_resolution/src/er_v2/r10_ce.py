@@ -132,7 +132,7 @@ def fit_model(args, train, valid):
     model = AutoModelForSequenceClassification.from_pretrained(args.base_model, num_labels=1,
         revision=BASE_REVISION if args.base_model == BASE_MODEL else None).to(args.device)
     model.config.problem_type = 'regression'  # custom binary-logit loss below, not model MSE
-    if args.device == 'cuda':
+    if args.device == 'cuda' and args.checkpointing:
         model.gradient_checkpointing_enable()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     steps = math.ceil(math.ceil(len(train) / args.batch) / args.accumulation) * args.epochs
@@ -258,6 +258,8 @@ def main():
     p.add_argument('--batch', type=int, default=16)
     p.add_argument('--score-batch', type=int, default=128)
     p.add_argument('--accumulation', type=int, default=4)
+    p.add_argument('--no-checkpointing', dest='checkpointing', action='store_false',
+                   help='disable activation checkpointing (faster; needs more VRAM)')
     p.add_argument('--epochs', type=int, default=3)
     p.add_argument('--patience', type=int, default=1)
     p.add_argument('--train-businesses', type=int, default=180000)

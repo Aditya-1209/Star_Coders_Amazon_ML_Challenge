@@ -21,8 +21,12 @@ def now():
 
 
 def save(path, value):
+    """Atomic and durable: a crash leaves either the old or the new file, never zeros."""
     tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n', encoding='utf-8')
+    with open(tmp, 'w', encoding='utf-8') as fh:
+        fh.write(json.dumps(value, indent=2, allow_nan=False) + '\n')
+        fh.flush()
+        os.fsync(fh.fileno())
     tmp.replace(path)
 
 
@@ -64,6 +68,14 @@ def parser():
     p.add_argument('--ce-batch', type=int, default=16)
     p.add_argument('--ce-score-batch', type=int, default=128)
     p.add_argument('--ce-epochs', type=int, default=3)
+    p.add_argument('--ce-accumulation', type=int, default=4)
+    p.add_argument('--ce-checkpointing', action=argparse.BooleanOptionalAction, default=True,
+                   help='activation checkpointing (saves VRAM, costs speed; off on 24 GB GPUs)')
+    p.add_argument('--ann', choices=['faiss', 'gpu-exact'], default='faiss',
+                   help='neighbour search: CPU FAISS IVF (approximate) or exact cosine on the GPU')
+    p.add_argument('--shard-pairs', type=int, default=2000000)
+    p.add_argument('--r11-features', action='store_true',
+                   help='stage-2 --lookalike and --record-competition features')
     p.add_argument('--encode-batch', type=int, default=256)
     p.add_argument('--nprobe', type=int, default=96)
     p.add_argument('--search-k', type=int, default=96)
@@ -103,13 +115,17 @@ def commands(args):
     for split in ('train', 'test'):
         add('encode_' + split, module('r10_retrieval', 'encode', '--split', split, '--model-dir', encoder,
             '--batch', args.encode_batch, '--device', args.device), *[w / 'emb' / f'{split}_{side}.npy' for side in ('s1', 'tg')], w / 'emb' / f'{split}.json')
-        add('ann_' + split, module('r10_retrieval', 'block', '--split', split, '--k', args.neural_k,
-            '--nprobe', args.nprobe, '--search-k', args.search_k, '--threads', args.threads), w / f'ncands_{split}.parquet', w / f'ann_{split}.json')
+        if args.ann == 'gpu-exact':  # exact top-k on the GPU: ~10 min instead of ~2 h, no approximation
+            add('ann_' + split, module('neural', 'block', '--split', split, '--k', args.neural_k), w / f'ncands_{split}.parquet')
+        else:
+            add('ann_' + split, module('r10_retrieval', 'block', '--split', split, '--k', args.neural_k,
+                '--nprobe', args.nprobe, '--search-k', args.search_k, '--threads', args.threads), w / f'ncands_{split}.parquet', w / f'ann_{split}.json')
         add('merge_' + split, module('r10_retrieval', 'merge', '--split', split, '--k', args.neural_k), w / f'cands_{split}.parquet')
         add('features_' + split, module('run_features', '--split', split, *data, '--enhanced', '--workers', args.threads,
-            '--shard-pairs', 2000000, '--overwrite'), w / f'feats_{split}')
+            '--shard-pairs', args.shard_pairs, '--overwrite'), w / f'feats_{split}')
     add('shift_check', [py, '-u', str(ROOT / 'scripts/analysis/r7_shift_check.py'), '--work', str(w), '--threads', str(args.threads)], w / 'shift_check.json')
     add('train', module('train', *data, *runtime, *trainopts, '--neural', '--neural-rescue-k', args.rescue_k,
+        *(['--lookalike', '--record-competition'] if args.r11_features else []),
         '--max-depth', 8, '--hist-cache-nodes', 1024), w / 'stage2_train.parquet', w / 'eval_preds.parquet',
         *[m / n for n in ('stage1.json', 'stage1_b.json', 'stage2.json', 'metrics.json')])
     add('predict', module('predict', *runtime, '--output', args.output / 'stage2'), w / 'test_preds.parquet')
@@ -123,7 +139,9 @@ def commands(args):
             *[w / 'ce_tokens' / f'{split}_{side}{suffix}.npy' for side in ('s1', 'tg') for suffix in ('', '_lengths')],
             w / 'ce_tokens' / f'{split}.json')
     ceopts = ['--device', args.device, '--threads', str(min(args.threads, 8)), '--batch', str(args.ce_batch),
-              '--score-batch', str(args.ce_score_batch), '--epochs', str(args.ce_epochs)]
+              '--score-batch', str(args.ce_score_batch), '--epochs', str(args.ce_epochs),
+              '--accumulation', str(args.ce_accumulation),
+              *([] if args.ce_checkpointing else ['--no-checkpointing'])]
     add('ce_train', module('r10_ce', 'train', *data, *ceopts), w / 'ce_model')
     for split in ('train', 'test'):
         add('ce_score_' + split, module('r10_ce', 'score', '--split', split, *ceopts), w / f'ce_{split}.parquet')
