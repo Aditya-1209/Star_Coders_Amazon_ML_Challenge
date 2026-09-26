@@ -82,7 +82,7 @@ def commands(args):
     w, m = args.work, args.work / 'models'
     def module(name, *more):
         return [py, '-u', '-m', 'er_v2.' + name, *map(str, more), '--work', str(w)]
-    runtime = ['--device', args.device, '--threads', str(args.threads), '--batch-rows', '50000', '--model-dir', str(m)]
+    runtime = ['--device', args.device, '--threads', str(args.threads), '--batch-rows', '500000', '--model-dir', str(m)]
     data = ['--dataset', str(args.dataset)]
     profile = 'enhanced'
     shift = w / 'shift_check.json'
@@ -107,7 +107,7 @@ def commands(args):
             '--nprobe', args.nprobe, '--search-k', args.search_k, '--threads', args.threads), w / f'ncands_{split}.parquet', w / f'ann_{split}.json')
         add('merge_' + split, module('r10_retrieval', 'merge', '--split', split, '--k', args.neural_k), w / f'cands_{split}.parquet')
         add('features_' + split, module('run_features', '--split', split, *data, '--enhanced', '--workers', args.threads,
-            '--shard-pairs', 150000, '--overwrite'), w / f'feats_{split}')
+            '--shard-pairs', 2000000, '--overwrite'), w / f'feats_{split}')
     add('shift_check', [py, '-u', str(ROOT / 'scripts/analysis/r7_shift_check.py'), '--work', str(w), '--threads', str(args.threads)], w / 'shift_check.json')
     add('train', module('train', *data, *runtime, *trainopts, '--neural', '--neural-rescue-k', args.rescue_k,
         '--max-depth', 8, '--hist-cache-nodes', 1024), w / 'stage2_train.parquet', w / 'eval_preds.parquet',
