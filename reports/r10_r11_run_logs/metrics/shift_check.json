@@ -1,0 +1,23 @@
+{
+  "allow_enhanced": true,
+  "countries": {
+    "India": {
+      "training_pairs": 234710,
+      "validation_pairs": 57986,
+      "baseline_auc": 0.6469366697766693,
+      "enhanced_auc": 0.6478326761219438,
+      "allow_enhanced": true
+    },
+    "US": {
+      "training_pairs": 211167,
+      "validation_pairs": 53236,
+      "baseline_auc": 0.6914422858085697,
+      "enhanced_auc": 0.6918169462788053,
+      "allow_enhanced": true
+    }
+  },
+  "sample_seed": 91,
+  "grouped_validation_seed": 61,
+  "rule": "enhanced AUC <= max(0.75, baseline AUC + 0.02) in each labeled country",
+  "limitation": "France has no matching labels; this diagnostic cannot establish its accuracy"
+}

@@ -1,0 +1,168 @@
+stage1 folds (0, 8): 20,454,167 pairs (negatives x0.5)
+[0]	train-logloss:0.09715	valid-logloss:0.09708
+[100]	train-logloss:0.00822	valid-logloss:0.00828
+[200]	train-logloss:0.00731	valid-logloss:0.00753
+[300]	train-logloss:0.00681	valid-logloss:0.00718
+[400]	train-logloss:0.00649	valid-logloss:0.00699
+[500]	train-logloss:0.00624	valid-logloss:0.00687
+[600]	train-logloss:0.00601	valid-logloss:0.00678
+[700]	train-logloss:0.00583	valid-logloss:0.00671
+[800]	train-logloss:0.00567	valid-logloss:0.00667
+[900]	train-logloss:0.00552	valid-logloss:0.00663
+[1000]	train-logloss:0.00539	valid-logloss:0.00660
+[1100]	train-logloss:0.00526	valid-logloss:0.00657
+[1200]	train-logloss:0.00514	valid-logloss:0.00655
+[1300]	train-logloss:0.00503	valid-logloss:0.00653
+[1400]	train-logloss:0.00492	valid-logloss:0.00652
+[1499]	train-logloss:0.00482	valid-logloss:0.00651
+stage1 folds (1, 9): 20,526,657 pairs (negatives x0.5)
+[0]	train-logloss:0.09711	valid-logloss:0.09710
+[100]	train-logloss:0.00820	valid-logloss:0.00833
+[200]	train-logloss:0.00725	valid-logloss:0.00751
+[300]	train-logloss:0.00679	valid-logloss:0.00720
+[400]	train-logloss:0.00646	valid-logloss:0.00700
+[500]	train-logloss:0.00619	valid-logloss:0.00686
+[600]	train-logloss:0.00598	valid-logloss:0.00678
+[700]	train-logloss:0.00580	valid-logloss:0.00671
+[800]	train-logloss:0.00564	valid-logloss:0.00666
+[900]	train-logloss:0.00549	valid-logloss:0.00662
+[1000]	train-logloss:0.00536	valid-logloss:0.00660
+[1100]	train-logloss:0.00523	valid-logloss:0.00657
+[1200]	train-logloss:0.00510	valid-logloss:0.00654
+[1300]	train-logloss:0.00498	valid-logloss:0.00652
+[1400]	train-logloss:0.00487	valid-logloss:0.00650
+[1499]	train-logloss:0.00476	valid-logloss:0.00649
+stage1 ensemble trained, 754s
+C:\Users\ashma\Star_Coders_Amazon_ML_Challenge\.venv312\Lib\site-packages\xgboost\core.py:569: UserWarning: [18:49:51] WARNING: C:\actions-runner\_work\xgboost\xgboost\src\common\error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+scored part_000.parquet: 2,000,000 pairs
+scored part_001.parquet: 2,000,093 pairs
+scored part_002.parquet: 2,000,007 pairs
+scored part_003.parquet: 2,000,005 pairs
+scored part_004.parquet: 2,000,036 pairs
+scored part_005.parquet: 2,000,010 pairs
+scored part_006.parquet: 2,000,043 pairs
+scored part_007.parquet: 2,000,072 pairs
+scored part_008.parquet: 2,000,008 pairs
+scored part_009.parquet: 2,000,018 pairs
+scored part_010.parquet: 2,000,052 pairs
+scored part_011.parquet: 2,000,025 pairs
+scored part_012.parquet: 2,000,001 pairs
+scored part_013.parquet: 2,000,031 pairs
+scored part_014.parquet: 2,000,028 pairs
+scored part_015.parquet: 2,000,029 pairs
+scored part_016.parquet: 2,000,017 pairs
+scored part_017.parquet: 2,000,020 pairs
+scored part_018.parquet: 2,000,075 pairs
+scored part_019.parquet: 2,000,051 pairs
+scored part_020.parquet: 2,000,046 pairs
+scored part_021.parquet: 2,000,003 pairs
+scored part_022.parquet: 2,000,068 pairs
+scored part_023.parquet: 2,000,045 pairs
+scored part_024.parquet: 2,000,028 pairs
+scored part_025.parquet: 2,000,066 pairs
+scored part_026.parquet: 2,000,057 pairs
+scored part_027.parquet: 2,000,044 pairs
+scored part_028.parquet: 2,000,012 pairs
+scored part_029.parquet: 2,000,016 pairs
+scored part_030.parquet: 2,000,027 pairs
+scored part_031.parquet: 2,000,017 pairs
+scored part_032.parquet: 2,000,051 pairs
+scored part_033.parquet: 2,000,016 pairs
+scored part_034.parquet: 2,000,045 pairs
+scored part_035.parquet: 2,000,062 pairs
+scored part_036.parquet: 2,000,082 pairs
+scored part_037.parquet: 2,000,069 pairs
+scored part_038.parquet: 2,000,026 pairs
+scored part_039.parquet: 1,920,398 pairs
+scored part_040.parquet: 2,000,043 pairs
+scored part_041.parquet: 2,000,051 pairs
+scored part_042.parquet: 2,000,001 pairs
+scored part_043.parquet: 2,000,069 pairs
+scored part_044.parquet: 2,000,030 pairs
+scored part_045.parquet: 2,000,060 pairs
+scored part_046.parquet: 2,000,003 pairs
+scored part_047.parquet: 2,000,022 pairs
+scored part_048.parquet: 2,000,025 pairs
+scored part_049.parquet: 2,000,072 pairs
+scored part_050.parquet: 2,000,036 pairs
+scored part_051.parquet: 2,000,087 pairs
+scored part_052.parquet: 2,000,030 pairs
+scored part_053.parquet: 2,000,053 pairs
+scored part_054.parquet: 2,000,079 pairs
+scored part_055.parquet: 2,000,036 pairs
+scored part_056.parquet: 2,000,053 pairs
+scored part_057.parquet: 2,000,031 pairs
+scored part_058.parquet: 2,000,020 pairs
+scored part_059.parquet: 2,000,088 pairs
+scored part_060.parquet: 2,000,003 pairs
+scored part_061.parquet: 2,000,075 pairs
+scored part_062.parquet: 2,000,051 pairs
+scored part_063.parquet: 2,000,058 pairs
+scored part_064.parquet: 2,000,015 pairs
+scored part_065.parquet: 2,000,046 pairs
+scored part_066.parquet: 2,000,040 pairs
+scored part_067.parquet: 2,000,034 pairs
+scored part_068.parquet: 2,000,068 pairs
+scored part_069.parquet: 2,000,020 pairs
+scored part_070.parquet: 2,000,081 pairs
+scored part_071.parquet: 2,000,067 pairs
+scored part_072.parquet: 2,000,042 pairs
+scored part_073.parquet: 2,000,049 pairs
+scored part_074.parquet: 2,000,061 pairs
+scored part_075.parquet: 2,000,038 pairs
+scored part_076.parquet: 2,000,040 pairs
+scored part_077.parquet: 2,000,042 pairs
+scored part_078.parquet: 2,000,036 pairs
+scored part_079.parquet: 2,000,010 pairs
+scored part_080.parquet: 2,000,042 pairs
+scored part_081.parquet: 2,000,062 pairs
+scored part_082.parquet: 2,000,068 pairs
+scored part_083.parquet: 2,000,039 pairs
+scored part_084.parquet: 2,000,015 pairs
+scored part_085.parquet: 2,000,068 pairs
+scored part_086.parquet: 2,000,018 pairs
+scored part_087.parquet: 2,000,048 pairs
+scored part_088.parquet: 2,000,031 pairs
+scored part_089.parquet: 2,000,062 pairs
+scored part_090.parquet: 2,000,044 pairs
+scored part_091.parquet: 2,000,039 pairs
+scored part_092.parquet: 2,000,084 pairs
+scored part_093.parquet: 2,000,034 pairs
+scored part_094.parquet: 2,000,074 pairs
+scored part_095.parquet: 2,000,051 pairs
+scored part_096.parquet: 2,000,043 pairs
+scored part_097.parquet: 2,000,061 pairs
+scored part_098.parquet: 1,384,341 pairs
+stage1 scored + context, 1452s
+[0]	train-logloss:0.53701	valid-logloss:0.53745
+[100]	train-logloss:0.02787	valid-logloss:0.02886
+[200]	train-logloss:0.02591	valid-logloss:0.02782
+[300]	train-logloss:0.02467	valid-logloss:0.02753
+[400]	train-logloss:0.02364	valid-logloss:0.02738
+[500]	train-logloss:0.02277	valid-logloss:0.02733
+[600]	train-logloss:0.02201	valid-logloss:0.02732
+[654]	train-logloss:0.02164	valid-logloss:0.02732
+stage2 trained (604 it), 1548s
+fold3_retrieval_oracle       F0.5=0.9987 P=1.0000 R=0.9958
+fold4_retrieval_oracle       F0.5=0.9987 P=1.0000 R=0.9958
+fold3_stage2_excl            F0.5=0.9869 P=0.9970 R=0.9676
+fold3_stage2_global_reference F0.5=0.9869 P=0.9970 R=0.9676
+fold3_stage2_noexcl          F0.5=0.9869 P=0.9970 R=0.9676
+fold3_stage1_excl            F0.5=0.9729 P=0.9899 R=0.9448
+fold3_oracle                 F0.5=0.9987 P=1.0000 R=0.9956
+fold4_stage2_excl            F0.5=0.9870 P=0.9970 R=0.9676
+fold4_stage2_global_reference F0.5=0.9870 P=0.9970 R=0.9676
+fold4_stage2_noexcl          F0.5=0.9870 P=0.9970 R=0.9676
+fold4_stage1_excl            F0.5=0.9735 P=0.9901 R=0.9453
+fold4_oracle                 F0.5=0.9987 P=1.0000 R=0.9957
+fold4 US       F0.5=0.9863 P=0.9971 R=0.9658
+fold4 India    F0.5=0.9880 P=0.9968 R=0.9704
+leaderboard estimate 0.9697 (France assumed 0.87)
+threshold 0.721; total 1599s

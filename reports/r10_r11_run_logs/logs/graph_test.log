@@ -1,0 +1,33 @@
+[     0s] building graph for France
+[     1s] anchors 942,190
+[    54s] two-hop pairs 4,333,843
+[    85s] attached fine-tuned encoder features to stage-3 candidates
+[    85s] stage-3 candidates 8,320,374 (32.07 per source1 overall)
+[   109s] computed features for 1,130,481 new pairs
+[   153s] two-hop support filter: 8,320,374 -> 6,008,824 candidates
+[   153s] support features done, 108 columns
+[   154s] building graph for India
+[   154s] anchors 2,765,370
+[   459s] two-hop pairs 12,661,825
+[   499s] attached fine-tuned encoder features to stage-3 candidates
+[   499s] stage-3 candidates 18,688,343 (23.07 per source1 overall)
+[   558s] computed features for 2,741,898 new pairs
+[   741s] two-hop support filter: 18,688,343 -> 10,543,806 candidates
+[   741s] support features done, 108 columns
+[   744s] building graph for US
+[   744s] anchors 2,265,082
+[   996s] two-hop pairs 10,418,399
+[  1031s] attached fine-tuned encoder features to stage-3 candidates
+[  1031s] stage-3 candidates 14,772,292 (22.28 per source1 overall)
+[  1077s] computed features for 2,433,385 new pairs
+[  1209s] two-hop support filter: 14,772,292 -> 7,923,150 candidates
+[  1209s] support features done, 108 columns
+C:\Users\ashma\Star_Coders_Amazon_ML_Challenge\.venv312\Lib\site-packages\xgboost\core.py:569: UserWarning: [19:53:05] WARNING: C:\actions-runner\_work\xgboost\xgboost\src\common\error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[  1333s] 5,892,394 matches, 14.13 candidates per source1

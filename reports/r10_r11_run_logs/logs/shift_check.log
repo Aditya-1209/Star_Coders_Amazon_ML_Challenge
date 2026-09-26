@@ -1,0 +1,4 @@
+India baseline: AUC=0.64694
+India enhanced: AUC=0.64783
+US baseline: AUC=0.69144
+US enhanced: AUC=0.69182

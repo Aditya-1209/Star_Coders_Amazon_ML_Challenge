@@ -1,0 +1,4 @@
+India: ANN vs exact recall@24=0.9531
+ANN train/India: 883,188 queries, 4,133,346 targets
+US: ANN vs exact recall@24=0.9609
+ANN train/US: 1,323,633 queries, 6,186,873 targets

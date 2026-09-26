@@ -1,0 +1,8 @@
+C:\Users\ashma\Star_Coders_Amazon_ML_Challenge\code\business_entity_resolution\src\er_v2\prepare.py:21: DeprecationWarning: the argument `missing_utf8_is_empty_string` for `read_csv` is deprecated. It was renamed to `empty_string_is_null` in version 1.43.0.
+  return pl.read_csv(
+train_source1: 2,206,821 rows in 12.3s
+train_source2: 5,034,616 rows in 27.1s
+train_source3: 5,285,603 rows in 27.9s
+test_source1: 1,732,544 rows in 10.4s
+test_source2: 4,887,273 rows in 28.2s
+test_source3: 5,082,316 rows in 28.2s

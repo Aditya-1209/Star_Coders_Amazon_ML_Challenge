@@ -1,0 +1,24 @@
+GPU: NVIDIA GeForce RTX 3060; 12.0 GiB
+{
+  "versions": {
+    "torch": "2.14.0+cu126",
+    "transformers": "5.17.0",
+    "sentence-transformers": "6.1.0",
+    "faiss-cpu": "1.15.1",
+    "xgboost": "3.4.1",
+    "polars": "1.44.2",
+    "numpy": "2.5.3",
+    "pyarrow": "25.0.1"
+  },
+  "free_gb": 306.6839714050293
+}
+2026-09-26T07:29:18.675553+00:00 translit -> D:\star_r10b\work\logs\translit.log
+2026-09-26T07:29:26.695207+00:00 prepare -> D:\star_r10b\work\logs\prepare.log
+2026-09-26T07:31:42.778306+00:00 key_train -> D:\star_r10b\work\logs\key_train.log
+2026-09-26T07:41:01.303631+00:00 key_test -> D:\star_r10b\work\logs\key_test.log
+2026-09-26T07:47:59.682496+00:00 encode_train -> D:\star_r10b\work\logs\encode_train.log
+2026-09-26T08:25:49.021311+00:00 ann_train -> D:\star_r10b\work\logs\ann_train.log
+2026-09-26T10:22:40.834313+00:00 merge_train -> D:\star_r10b\work\logs\merge_train.log
+2026-09-26T10:22:50.853440+00:00 features_train -> D:\star_r10b\work\logs\features_train.log
+2026-09-26T10:53:06.146288+00:00 encode_test -> D:\star_r10b\work\logs\encode_test.log
+2026-09-26T11:29:17.719098+00:00 ann_test -> D:\star_r10b\work\logs\ann_test.log

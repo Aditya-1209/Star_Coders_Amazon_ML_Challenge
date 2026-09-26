@@ -1,0 +1,53 @@
+[     0s] building graph for India
+[     1s] anchors 1,206,220
+[   140s] two-hop pairs 5,574,227
+[   316s] attached fine-tuned encoder features to stage-3 candidates
+[   316s] stage-3 candidates 8,211,049 (9.30 per source1 overall)
+[   348s] computed features for 1,217,863 new pairs
+[   412s] support features done, 108 columns
+[   413s] building graph for US
+[   414s] anchors 1,793,256
+[   639s] two-hop pairs 8,555,019
+[   667s] attached fine-tuned encoder features to stage-3 candidates
+[   667s] stage-3 candidates 12,535,686 (9.47 per source1 overall)
+[   716s] computed features for 2,141,162 new pairs
+[   826s] support features done, 108 columns
+[0]	train-logloss:0.34331	valid-logloss:0.34312
+[100]	train-logloss:0.01196	valid-logloss:0.01300
+[200]	train-logloss:0.01128	valid-logloss:0.01284
+[300]	train-logloss:0.01055	valid-logloss:0.01281
+[394]	train-logloss:0.00991	valid-logloss:0.01282
+[   968s] stage3 trained (344 it)
+C:\Users\ashma\Star_Coders_Amazon_ML_Challenge\.venv312\Lib\site-packages\xgboost\core.py:569: UserWarning: [19:32:20] WARNING: C:\actions-runner\_work\xgboost\xgboost\src\common\error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+fold4 US       F0.5=0.9871 P=0.9974 R=0.9686
+fold4 India    F0.5=0.9886 P=0.9972 R=0.9719
+leaderboard estimate 0.9703
+stage3_weight 1.0
+threshold 0.7298732399940491
+stage3_threshold 0.7298732399940491
+feature_trials []
+feature_profile enhanced
+best_iteration 344
+feature_version r7-pairlocal-1
+selection_fold 3
+country_thresholds {}
+fold3_selected         F0.5=0.9875 P=0.9973 R=0.9699
+fold3_global_reference F0.5=0.9875 P=0.9973 R=0.9699
+fold3_stage3           F0.5=0.9875 P=0.9973 R=0.9699
+fold3_stage2_ref       F0.5=0.9869 P=0.9970 R=0.9676
+fold3_oracle           F0.5=0.9989 P=1.0000 R=0.9965
+fold3_mean_candidates 12.214803873148496
+fold4_selected         F0.5=0.9877 P=0.9973 R=0.9699
+fold4_global_reference F0.5=0.9877 P=0.9973 R=0.9699
+fold4_stage3           F0.5=0.9877 P=0.9973 R=0.9699
+fold4_stage2_ref       F0.5=0.9870 P=0.9970 R=0.9676
+fold4_oracle           F0.5=0.9989 P=1.0000 R=0.9966
+fold4_mean_candidates 12.222718553152507
+excluded_countries []

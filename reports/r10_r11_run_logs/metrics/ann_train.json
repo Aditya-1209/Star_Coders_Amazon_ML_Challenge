@@ -1,0 +1,19 @@
+{
+  "countries": {
+    "India": {
+      "queries": 32,
+      "ann_recall_at_k": 0.953125,
+      "k": 24
+    },
+    "US": {
+      "queries": 32,
+      "ann_recall_at_k": 0.9609375,
+      "k": 24
+    }
+  },
+  "nprobe": 96,
+  "nlist": 4096,
+  "search_k": 96,
+  "k": 24,
+  "approximate": true
+}

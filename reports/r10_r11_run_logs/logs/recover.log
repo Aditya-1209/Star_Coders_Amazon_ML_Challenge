@@ -1,0 +1,31 @@
+=== 17:59:50 ann_test_gpu start
+=== 18:01:36 restarting with 16 threads (lighter load)
+=== 18:01:41 ann_test_gpu start
+=== 18:13:04 ann_test_gpu done
+=== 18:13:04 merge_test start
+=== 18:13:10 merge_test done
+=== 18:13:10 features_test start
+=== 18:36:59 features_test done
+=== 18:36:59 shift_check start
+=== 18:37:15 shift_check done
+=== 18:37:15 train start
+=== 19:03:56 train done
+=== 19:03:56 predict start
+=== 19:16:10 predict done
+=== 19:16:10 STAGE-2 FILE COPIED to C:\Users\ashma\Star_Coders_Amazon_ML_Challenge\submissions\r10_stage2
+=== 19:16:10 graph_train start
+=== 19:32:50 graph_train done
+=== 19:32:50 graph_test start
+=== 19:55:06 graph_test done
+=== 19:55:06 tokens_train start
+=== 20:07:27 tokens_train done
+=== 20:07:27 tokens_test start
+=== 20:19:24 tokens_test done
+=== 20:19:24 ce_train start
+=== 20:24:57 r11_train start
+=== 20:56:15 r11_train done
+=== 20:56:15 r11_predict start
+=== 21:11:22 r11_predict done
+=== 21:11:22 r11_validate start
+=== 21:11:56 r11_validate done
+=== 21:11:56 R11 FILE READY: C:\Users\ashma\Star_Coders_Amazon_ML_Challenge\submissions\r11_stage2

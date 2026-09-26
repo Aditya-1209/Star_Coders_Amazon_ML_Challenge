@@ -1,0 +1,11 @@
+C:\Users\ashma\Star_Coders_Amazon_ML_Challenge\.venv312\Lib\site-packages\xgboost\core.py:569: UserWarning: [19:04:00] WARNING: C:\actions-runner\_work\xgboost\xgboost\src\common\error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+stage1 done: 22,448,093 survivors, 684s
+stage2 done on 22,448,093 pruned candidates (p1>=0.001), 726s
+threshold 0.721: 5,886,909 matched pairs, 1,635,741/1,732,544 source1 with >=1 match, 730s

@@ -1,0 +1,35 @@
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 3784.58it/s]
+C:\Users\ashma\Star_Coders_Amazon_ML_Challenge\code\business_entity_resolution\src\er_v2\r10_retrieval.py:46: FutureWarning: The `get_sentence_embedding_dimension` method has been renamed to `get_embedding_dimension`.
+  shape=(side_rows(args.work, args.split, side), model.get_sentence_embedding_dimension()))
+encode test/s1: 200,000
+encode test/s1: 400,000
+encode test/s1: 600,000
+encode test/s1: 800,000
+encode test/s1: 1,000,000
+encode test/s1: 1,200,000
+encode test/s1: 1,400,000
+encode test/s1: 1,600,000
+encode test/tg: 200,000
+encode test/tg: 400,000
+encode test/tg: 600,000
+encode test/tg: 800,000
+encode test/tg: 1,000,000
+encode test/tg: 1,200,000
+encode test/tg: 1,400,000
+encode test/tg: 1,600,000
+encode test/tg: 1,800,000
+encode test/tg: 2,000,000
+encode test/tg: 2,200,000
+encode test/tg: 2,400,000
+encode test/tg: 2,600,000
+encode test/tg: 2,800,000
+encode test/tg: 3,000,000
+encode test/tg: 3,200,000
+encode test/tg: 3,400,000
+encode test/tg: 3,600,000
+encode test/tg: 3,800,000
+encode test/tg: 4,000,000
+encode test/tg: 4,200,000
+encode test/tg: 4,400,000
+encode test/tg: 4,600,000
+encode test/tg: 4,800,000

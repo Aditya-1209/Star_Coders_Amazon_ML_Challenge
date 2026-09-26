@@ -1,0 +1,9 @@
+{
+  "top_k": 64,
+  "name_k": 16,
+  "address_k": 8,
+  "rescue_k": 8,
+  "phonetic_k": 8,
+  "pairs": 152861380,
+  "anchors": 2206821
+}
