@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 
 BASE_MODEL = "intfloat/multilingual-e5-small"
+BASE_REVISION = "fd1525a9fd15316a2d503bf26ab031a61d056e98"
 ENCODER_FOLDS = [0, 1, 8, 9]
 MAX_LEN = 48
 DIM = 384
@@ -54,19 +55,24 @@ def finetune(work: Path, dataset: Path, out: Path, n_pairs: int, batch: int, epo
 
     from .run_block import load_split
     from .run_features import ground_truth_pairs
-    from .train import fold_expr
+    from .folds import fold_expr
 
     t0 = time.time()
-    s1, tg = load_split(work, "train")
+    s1, tg = load_split(work, "train", columns=["idx", "entity_id", "country", "business_name", "business_address"])
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
     tg = tg.with_columns(pl.col("idx").cast(pl.UInt32))
     truth = ground_truth_pairs(dataset, s1, tg).with_columns(fold_expr())
     truth = truth.filter(pl.col("fold").is_in(ENCODER_FOLDS)).drop("fold")
-    pos = truth.sample(min(n_pairs, len(truth)), seed=7, shuffle=True)
+    # One positive per business avoids treating its other positive as a negative
+    # inside MultipleNegativesRankingLoss. Shuffle before choosing the positive.
+    pos = truth.sample(fraction=1.0, seed=7, shuffle=True).unique("sidx", keep="first", maintain_order=True)
+    pos = pos.unique("tidx", keep="first", maintain_order=True).head(n_pairs)
     # hard negative: best-ranked blocking candidate of the same business that is not a match
-    cands = (pl.scan_parquet(work / "cands_train.parquet").select("sidx", "tidx", "brank")
+    cands = (pl.scan_parquet(work / ("key_train.parquet" if (work / "key_train.parquet").exists() else "cands_train.parquet")).select("sidx", "tidx", "brank")
              .join(pos.select("sidx").unique().lazy(), on="sidx", how="semi").collect())
-    neg = (cands.join(truth, on=["sidx", "tidx"], how="anti").sort("sidx", "brank")
+    # A hard negative that is another training business's positive would be a
+    # false in-batch negative. Restrict hard negatives to unowned training targets.
+    neg = (cands.join(truth.select("tidx").unique(), on="tidx", how="anti").sort("sidx", "brank")
            .unique("sidx", keep="first").select("sidx", neg="tidx"))
     pos = pos.join(neg, on="sidx", how="inner")
     text_s = dict(zip(s1["idx"].to_list(), record_text(s1)))
@@ -77,7 +83,9 @@ def finetune(work: Path, dataset: Path, out: Path, n_pairs: int, batch: int, epo
                 for s, t, n in zip(pos["sidx"].to_list(), pos["tidx"].to_list(), pos["neg"].to_list())]
     _log(t0, f"{len(examples):,} (business, match, hard negative) triples from folds {ENCODER_FOLDS}")
 
-    model = SentenceTransformer(BASE_MODEL, device="cuda")
+    if len(examples) < batch:
+        raise ValueError("Too few distinct training businesses with hard negatives for the encoder batch")
+    model = SentenceTransformer(BASE_MODEL, revision=BASE_REVISION, device="cuda")
     model.max_seq_length = MAX_LEN
     loader = DataLoader(examples, shuffle=True, batch_size=batch, drop_last=True)
     loss = losses.MultipleNegativesRankingLoss(model)
@@ -87,8 +95,8 @@ def finetune(work: Path, dataset: Path, out: Path, n_pairs: int, batch: int, epo
     out.mkdir(parents=True, exist_ok=True)
     model.save(str(out))
     (out / "finetune.json").write_text(json.dumps({
-        "base_model": BASE_MODEL, "licence": "MIT", "pairs": len(examples), "batch": batch,
-        "epochs": epochs, "lr": lr, "encoder_folds": ENCODER_FOLDS, "max_len": MAX_LEN}, indent=2))
+        "base_model": BASE_MODEL, "revision": BASE_REVISION, "licence": "MIT", "pairs": len(examples), "batch": batch,
+        "epochs": epochs, "lr": lr, "encoder_folds": ENCODER_FOLDS, "max_len": MAX_LEN, "unique_business_batches": True}, indent=2))
     _log(t0, f"saved fine-tuned encoder to {out}")
 
 
@@ -167,19 +175,32 @@ def block(work: Path, split: str, k: int, qbatch: int) -> None:
 
 # ------------------------------------------------------------------ pair scores
 class Embeddings:
-    """Random access to a split's stored embeddings (loaded once into RAM)."""
+    """Random access to disk-backed embeddings, with bounded pair gathers."""
 
     def __init__(self, work: Path, split: str):
-        self.s1 = np.load(work / "emb" / f"{split}_s1.npy")
-        self.tg = np.load(work / "emb" / f"{split}_tg.npy")
+        self.s1 = np.load(work / "emb" / f"{split}_s1.npy", mmap_mode="r")
+        self.tg = np.load(work / "emb" / f"{split}_tg.npy", mmap_mode="r")
 
-    def cos(self, sidx: np.ndarray, tidx: np.ndarray, chunk: int = 1_000_000) -> np.ndarray:
+    def cos(self, sidx: np.ndarray, tidx: np.ndarray, chunk: int = 32768) -> np.ndarray:
+        import os
+        device = os.environ.get("R10_NEURAL_DEVICE")
+        if device is None:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu":
+            out = np.empty(len(sidx), dtype=np.float32)
+            for i in range(0, len(sidx), chunk):
+                a = np.asarray(self.s1[sidx[i:i + chunk]], dtype=np.float32)
+                b = np.asarray(self.tg[tidx[i:i + chunk]], dtype=np.float32)
+                out[i:i + chunk] = np.einsum("ij,ij->i", a, b)
+            return out
         import torch
         out = np.empty(len(sidx), dtype=np.float32)
         for i in range(0, len(sidx), chunk):
-            a = torch.from_numpy(self.s1[sidx[i:i + chunk]]).cuda()
-            b = torch.from_numpy(self.tg[tidx[i:i + chunk]]).cuda()
-            out[i:i + chunk] = (a * b).sum(1).float().cpu().numpy()
+            a = torch.from_numpy(np.array(self.s1[sidx[i:i + chunk]], copy=True)).to(device)
+            b = torch.from_numpy(np.array(self.tg[tidx[i:i + chunk]], copy=True)).to(device)
+            # fp32 accumulation avoids fp16 dot-product rounding at the cutoff.
+            out[i:i + chunk] = (a.float() * b.float()).sum(1).cpu().numpy()
         return out
 
 
@@ -241,7 +262,7 @@ def ce_finetune(work: Path, out: Path, n_pairs: int, batch: int, lr: float) -> N
     from torch.utils.data import DataLoader
 
     from .run_block import load_split
-    from .train import fold_expr
+    from .folds import fold_expr
 
     t0 = time.time()
     st2 = pl.read_parquet(work / "stage2_train.parquet", columns=["sidx", "tidx", "label"])
@@ -290,7 +311,7 @@ def probe(work: Path, dataset: Path) -> None:
     """Fold-3 retrieval: how many true pairs does the neural channel add to key blocking?"""
     from .run_block import load_split
     from .run_features import ground_truth_pairs
-    from .train import fold_expr
+    from .folds import fold_expr
 
     s1, tg = load_split(work, "train")
     truth = ground_truth_pairs(dataset, s1, tg).with_columns(fold_expr()).filter(pl.col("fold") == 3).drop("fold")

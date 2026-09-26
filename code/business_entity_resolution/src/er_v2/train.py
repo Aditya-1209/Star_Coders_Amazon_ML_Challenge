@@ -29,7 +29,7 @@ from .metrics import by_country, leaderboard_estimate, macro_f05
 from .decision import best_per_target, tune_threshold, tune_country_thresholds, decide_country
 from .runtime import BATCH_ROWS, DEFAULT_THREADS, feature_parts, positive_int
 
-N_FOLDS = 10
+from .folds import N_FOLDS, fold_expr
 STAGE1_GROUPS = ((0, 8), (1, 9))
 NEG_FRAC = 0.5
 FEATURE_VERSION = "r7-pairlocal-1"
@@ -74,10 +74,6 @@ def validation_sample(df: pl.DataFrame, seed: int, limit: int = 2_000_000) -> pl
     if df.is_empty():
         raise ValueError("Validation fold has no candidate pairs; use a larger training sample")
     return df.sample(min(limit, len(df)), seed=seed)
-
-
-def fold_expr() -> pl.Expr:
-    return (pl.col("sidx").hash(seed=11) % N_FOLDS).cast(pl.Int8).alias("fold")
 
 
 # ---- test-density simulation ("ghost" businesses) ------------------------------
@@ -196,10 +192,10 @@ def fit(df: pl.DataFrame, feats: list[str], valid: pl.DataFrame | None, rounds: 
 
 
 def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: list[xgb.Booster], feats,
-                  batch_rows: int = BATCH_ROWS, floor: float = 0.0) -> pl.DataFrame:
+                  batch_rows: int = BATCH_ROWS, floor: float = 0.0, rescue=None) -> pl.DataFrame:
     """Use complementary models on their training groups, ensemble elsewhere.
 
-    Only pairs with p1 >= floor are kept (stage 2 never sees the rest).
+    Keep p1 >= floor plus any explicitly supplied neural rescue shortlist.
     Fold 3 influences early stopping, so only fold 4 is an untouched holdout.
     """
     out = []
@@ -214,10 +210,30 @@ def stage1_scores(folder: Path, models: dict[int, xgb.Booster], default: list[xg
             mask = df["fold"].is_in(folds).to_numpy()
             if mask.any():
                 pred[mask] = predict_frame(model, df.filter(pl.Series(mask)), feats, batch_rows)
-        out.append(df.select("sidx", "tidx").with_columns(p1=pl.Series(pred.astype(np.float32)))
-                   .filter(pl.col("p1") >= floor))
+        current = df.select("sidx", "tidx").with_columns(p1=pl.Series(pred.astype(np.float32)))
+        out.append(keep_candidates(current, floor, rescue))
         print(f"scored {p.name}: {len(df):,} pairs", flush=True)
     return pl.concat(out)
+
+
+def keep_candidates(scores, floor, rescue=None):
+    """Rescue is a keyed shortlist, never a blanket lowering of lexical thresholds."""
+    if rescue is None:
+        return scores.filter(pl.col("p1") >= floor)
+    if isinstance(rescue, ContextIndex):
+        # Never rebuild a 10M-row rescue hash table for every 150K-row feature shard.
+        extra = rescue.attach(scores.filter(pl.col("p1") < floor)).select(scores.columns)
+        return pl.concat([scores.filter(pl.col("p1") >= floor), extra])
+    marked = scores.join(rescue.with_columns(_rescue=pl.lit(True)), on=["sidx", "tidx"], how="left")
+    return marked.filter((pl.col("p1") >= floor) | pl.col("_rescue").fill_null(False)).drop("_rescue")
+
+
+def neural_rescue(work, split, k):
+    if not k:
+        return None
+    frame = (pl.scan_parquet(work / f"ncands_{split}.parquet").filter(pl.col("nrank") <= k)
+             .select("sidx", "tidx").unique().collect(engine="streaming"))
+    return ContextIndex(frame)
 
 
 def context_features(scores: pl.DataFrame) -> pl.DataFrame:
@@ -266,6 +282,7 @@ def main() -> None:
                     help="leave these countries out of all training (unseen-country proxy for France)")
     ap.add_argument("--extra-stage1-folds", action=argparse.BooleanOptionalAction, default=True,
                     help="use folds 8/9 as additional stage-1 training data")
+    ap.add_argument("--neural-rescue-k", type=int, default=0)
     ap.add_argument("--neural", action="store_true",
                     help="add fine-tuned encoder similarity (work/emb) to stage 2; never to stage 1")
     ap.add_argument("--ghost-frac", type=float, default=0.0,
@@ -274,6 +291,8 @@ def main() -> None:
     ap.add_argument("--neg-frac", type=float, default=NEG_FRAC,
                     help="fraction of stage-1 negatives kept (reweighted); lowers training RAM")
     args = ap.parse_args()
+    if args.neural_rescue_k < 0 or (args.neural_rescue_k and not args.neural):
+        ap.error("neural-rescue-k requires --neural and a nonnegative k")
     tag = "".join(f"_no{c}" for c in args.exclude_country)
     if args.ghost_frac > 0:
         tag += f"_ghost{int(round(args.ghost_frac * 100))}"
@@ -312,7 +331,7 @@ def main() -> None:
 
     held_out = {fold: m1 for fold in groups[0]}
     held_out.update({fold: m0 for fold in groups[1]})
-    scores = stage1_scores(folder, held_out, rankers, f1, args.batch_rows, floor=PRUNE)
+    scores = stage1_scores(folder, held_out, rankers, f1, args.batch_rows, floor=PRUNE, rescue=neural_rescue(work, "train", args.neural_rescue_k))
     ctx = context_features(scores)
     del scores
     if args.neural:
@@ -361,7 +380,7 @@ def main() -> None:
     allp = []
     for p in feature_parts(folder):
         part = ghostify(pl.read_parquet(p)).with_columns(fold_expr())
-        part = ctx_full.attach(part).filter(pl.col("p1") >= PRUNE)
+        part = ctx_full.attach(part)  # context already enforces the shared pruning/rescue rule
         allp.append(part.select("sidx", "tidx", "fold", "p1", "label").with_columns(
             p2=pl.Series(predict_frame(m2, part, f2, args.batch_rows))))
     allp = pl.concat(allp)
@@ -424,6 +443,7 @@ def main() -> None:
     results["stage3_eligible_folds"] = [3, 4, 6, 7]
     results["feature_version"] = FEATURE_VERSION
     results["neural"] = bool(args.neural)
+    results["neural_rescue_k"] = args.neural_rescue_k
     results["feature_trials"] = trials
     results["feature_profile"] = "enhanced" if "token_align_min" in f2 else "baseline"
     results["stage1_feature_profile"] = "baseline"

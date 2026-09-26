@@ -67,12 +67,15 @@ def main() -> None:
     t = time.time()
 
     parts = feature_parts(Path(args.feats or work / "feats_test"))
+    from .train import keep_candidates, neural_rescue
+    rescue = neural_rescue(work, "test", meta.get("neural_rescue_k", 0))
     scores = []
     for p in parts:
         df = pl.read_parquet(p)
         # Same as training: only stage-1 survivors reach stage 2 and its context.
-        scores.append(df.select("sidx", "tidx").with_columns(
-            p1=pl.Series(predict_ensemble(rankers, df, f1, args.batch_rows))).filter(pl.col("p1") >= prune))
+        current = df.select("sidx", "tidx").with_columns(
+            p1=pl.Series(predict_ensemble(rankers, df, f1, args.batch_rows)))
+        scores.append(keep_candidates(current, prune, rescue))
     scores = pl.concat(scores)
     ctx = context_features(scores)
     if meta.get("neural"):

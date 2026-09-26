@@ -45,6 +45,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", default="work")
     ap.add_argument("--split", required=True, choices=["train", "test"])
+    ap.add_argument("--candidate-prefix", choices=["cands", "key"], default="cands")
     ap.add_argument("--top-k", type=positive_int, default=64)
     ap.add_argument("--name-k", type=int, default=16, help="extra name-only candidates; 0 disables")
     ap.add_argument("--address-k", type=int, default=8, help="extra address-only candidates; 0 disables")
@@ -58,7 +59,7 @@ def main() -> None:
     n_targets = sum(parquet_rows(work / "norm" / f"{args.split}_source{i}.parquet") for i in (2, 3))
     n_anchors = parquet_rows(work / "norm" / f"{args.split}_source1.parquet")
     if args.augment_phonetic:
-        previous = json.loads((work / f"cands_{args.split}.json").read_text())
+        previous = json.loads((work / f"{args.candidate_prefix}_{args.split}.json").read_text())
         for key in ("top_k", "name_k", "address_k", "rescue_k"):
             if previous[key] != getattr(args, key):
                 raise ValueError(f"Cannot reuse original channels with changed {key}")
@@ -72,7 +73,7 @@ def main() -> None:
             continue
         print(f"indexing {country}: {len(tg):,} targets", flush=True)
         if args.augment_phonetic:
-            base = (pl.scan_parquet(work / f"cands_{args.split}.parquet")
+            base = (pl.scan_parquet(work / f"{args.candidate_prefix}_{args.split}.parquet")
                     .filter(pl.col("rescue") != 2)
                     .join(s1.select(sidx="idx").lazy(), on="sidx", how="semi").collect(engine="streaming"))
             part = base
@@ -107,7 +108,7 @@ def main() -> None:
               f"source1, {time.time() - t:.0f}s", flush=True)
         del base, part, s1, tg
         gc.collect()
-    destination = work / f"cands_{args.split}.parquet"
+    destination = work / f"{args.candidate_prefix}_{args.split}.parquet"
     temporary = destination.with_suffix(".parquet.tmp")
     pl.scan_parquet(paths).sink_parquet(temporary)
     temporary.replace(destination)
@@ -115,7 +116,7 @@ def main() -> None:
     metadata = {"top_k": args.top_k, "name_k": args.name_k, "address_k": args.address_k,
                 "rescue_k": args.rescue_k, "phonetic_k": args.phonetic_k,
                 "pairs": pair_count, "anchors": n_anchors}
-    (work / f"cands_{args.split}.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (work / f"{args.candidate_prefix}_{args.split}.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"{args.split}: {pair_count:,} candidate pairs for "
           f"{covered:,}/{n_anchors:,} source1 in {time.time() - t:.0f}s")
 

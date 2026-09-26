@@ -1,5 +1,11 @@
 # Star Coders - Amazon ML Challenge
 
+> **R10:** follow [the desktop neural guide](docs/README_r10.md).
+> Built from `r8-neural` for i9-13900K / 32 GB / RTX 3060 12 GB: bounded ANN
+> retrieval, neural candidate rescue, a trained cross-encoder and validation-gated
+> graph fusion. Full training and a 97.5 score have **not** been measured.
+
+
 > **On `r7-improvements`, start with [the r7 experiment guide](docs/README_r7_overnight.md).**
 > It runs a CPU or CUDA experiment with phonetic retrieval, token-alignment
 > features, a train/test shift diagnostic, and validation-selected feature
