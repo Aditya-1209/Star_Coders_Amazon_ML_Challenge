@@ -145,12 +145,14 @@ def block(work: Path, split: str, k: int, qbatch: int) -> None:
             continue
         T = torch.from_numpy(np.ascontiguousarray(et[ti])).cuda()
         kk = min(k, len(ti))
-        for i in range(0, len(si), qbatch):
-            q = torch.from_numpy(np.ascontiguousarray(es[si[i:i + qbatch]])).cuda()
+        # the (queries x records) score matrix must fit in ~2.5 GB of VRAM (fp16)
+        qb = max(64, min(qbatch, int(2.5e9 / (2 * len(ti)))))
+        for i in range(0, len(si), qb):
+            q = torch.from_numpy(np.ascontiguousarray(es[si[i:i + qb]])).cuda()
             val, pos = torch.topk(q @ T.T, kk, dim=1)
             val, pos = val.float().cpu().numpy(), pos.cpu().numpy()
             parts.append(pl.DataFrame({
-                "sidx": np.repeat(si[i:i + qbatch], kk).astype(np.uint32),
+                "sidx": np.repeat(si[i:i + qb], kk).astype(np.uint32),
                 "tidx": ti[pos.ravel()].astype(np.uint32),
                 "ncos": val.ravel().astype(np.float32),
                 "nrank": np.tile(np.arange(1, kk + 1, dtype=np.uint16), len(q)),
