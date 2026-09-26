@@ -25,6 +25,8 @@ OUT=${OUT:-output_r6}
 OUT_ST=${OUT_ST:-output_r6_selftrain}
 PY=${PY:-./.venv312/Scripts/python}
 TRAIN_ARGS=${TRAIN_ARGS:-}
+BLOCK_ARGS=${BLOCK_ARGS:-}
+FEAT_ARGS=${FEAT_ARGS:---shard-pairs 4000000}
 NEURAL_K=${NEURAL_K:-16}
 LOG=$WORK/logs
 mkdir -p "$LOG" "$MODEL"
@@ -42,10 +44,10 @@ for step in "${STEPS[@]}"; do
   case $step in
     translit) run translit $PY -u -m er_v2.translit --out "$MODEL/translit.json" ;;
     prepare)  run prepare $PY -u -m er_v2.prepare --work "$WORK" --translit "$MODEL/translit.json" ;;
-    block)    run block_train $PY -u -m er_v2.run_block --work "$WORK" --split train
-              run block_test  $PY -u -m er_v2.run_block --work "$WORK" --split test ;;
-    feats)    run feats_train $PY -u -m er_v2.run_features --work "$WORK" --split train --overwrite
-              run feats_test  $PY -u -m er_v2.run_features --work "$WORK" --split test --overwrite ;;
+    block)    run block_train $PY -u -m er_v2.run_block --work "$WORK" --split train $BLOCK_ARGS
+              run block_test  $PY -u -m er_v2.run_block --work "$WORK" --split test $BLOCK_ARGS ;;
+    feats)    run feats_train $PY -u -m er_v2.run_features --work "$WORK" --split train --overwrite $FEAT_ARGS
+              run feats_test  $PY -u -m er_v2.run_features --work "$WORK" --split test --overwrite $FEAT_ARGS ;;
     train)    run train $PY -u -m er_v2.train --work "$WORK" --model-dir "$MODEL" $TRAIN_ARGS ;;
     finetune) run finetune $PY -u -m er_v2.neural finetune --work "$WORK" ;;
     encode)   run encode_train $PY -u -m er_v2.neural encode --work "$WORK" --split train

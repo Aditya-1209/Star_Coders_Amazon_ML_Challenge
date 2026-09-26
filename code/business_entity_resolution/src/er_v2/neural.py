@@ -218,6 +218,71 @@ def merge_candidates(work: Path, split: str, k: int) -> None:
           f"total {len(out):,}")
 
 
+# ------------------------------------------------------------------ cross-encoder
+CE_DIR = "work/neural_ce"
+
+
+def pair_text(s1: pl.DataFrame, tg: pl.DataFrame, pairs: pl.DataFrame) -> tuple[list[str], list[str]]:
+    a = pairs.join(s1.select(sidx=pl.col("idx").cast(pl.UInt32), n1="business_name", a1="business_address"),
+                   on="sidx", how="left", maintain_order="left")
+    a = a.join(tg.select(tidx=pl.col("idx").cast(pl.UInt32), n2="business_name", a2="business_address"),
+               on="tidx", how="left", maintain_order="left").fill_null("")
+    left = [f"{n} | {ad}" for n, ad in zip(a["n1"].to_list(), a["a1"].to_list())]
+    right = [f"{n} | {ad}" for n, ad in zip(a["n2"].to_list(), a["a2"].to_list())]
+    return left, right
+
+
+def ce_finetune(work: Path, out: Path, n_pairs: int, batch: int, lr: float) -> None:
+    """Cross-encoder on stage-1 survivors of the encoder folds (0/1/8/9) only."""
+    from sentence_transformers.cross_encoder import CrossEncoder
+    from sentence_transformers import InputExample
+    from torch.utils.data import DataLoader
+
+    from .run_block import load_split
+    from .train import fold_expr
+
+    t0 = time.time()
+    st2 = pl.read_parquet(work / "stage2_train.parquet", columns=["sidx", "tidx", "label"])
+    st2 = st2.with_columns(fold_expr()).filter(pl.col("fold").is_in(ENCODER_FOLDS))
+    st2 = st2.sample(min(n_pairs, len(st2)), seed=11, shuffle=True)
+    s1, tg = load_split(work, "train")
+    left, right = pair_text(s1, tg, st2)
+    ex = [InputExample(texts=[l, r], label=float(y)) for l, r, y in zip(left, right, st2["label"].to_list())]
+    _log(t0, f"{len(ex):,} survivor pairs ({st2['label'].mean():.2%} matches) from folds {ENCODER_FOLDS}")
+    model = CrossEncoder(BASE_MODEL, num_labels=1, max_length=2 * MAX_LEN, device="cuda")
+    loader = DataLoader(ex, shuffle=True, batch_size=batch, drop_last=True)
+    model.fit(train_dataloader=loader, epochs=1, warmup_steps=int(0.05 * len(loader)),
+              optimizer_params={"lr": lr}, use_amp=True, show_progress_bar=True)
+    out.mkdir(parents=True, exist_ok=True)
+    model.save(str(out))
+    _log(t0, f"saved cross-encoder to {out}")
+
+
+def ce_score(work: Path, model_dir: Path, split: str, pairs_path: Path, out_path: Path, batch: int) -> None:
+    """Score (sidx, tidx) pairs with the cross-encoder -> parquet (sidx, tidx, ce)."""
+    import torch
+    from sentence_transformers.cross_encoder import CrossEncoder
+
+    from .run_block import load_split
+
+    t0 = time.time()
+    pairs = pl.read_parquet(pairs_path, columns=["sidx", "tidx"]).unique()
+    s1, tg = load_split(work, split)
+    model = CrossEncoder(str(model_dir), device="cuda", max_length=2 * MAX_LEN)
+    model.model.half()
+    outs = []
+    step = 500_000
+    for i in range(0, len(pairs), step):
+        chunk = pairs.slice(i, step)
+        left, right = pair_text(s1, tg, chunk)
+        with torch.inference_mode():
+            sc = model.predict(list(zip(left, right)), batch_size=batch, show_progress_bar=False,
+                               convert_to_numpy=True)
+        outs.append(chunk.with_columns(ce=pl.Series(np.asarray(sc, dtype=np.float32))))
+        _log(t0, f"{split}: {min(i + step, len(pairs)):,}/{len(pairs):,} pairs")
+    pl.concat(outs).write_parquet(out_path)
+
+
 # ------------------------------------------------------------------ probe
 def probe(work: Path, dataset: Path) -> None:
     """Fold-3 retrieval: how many true pairs does the neural channel add to key blocking?"""
@@ -247,7 +312,9 @@ def probe(work: Path, dataset: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["finetune", "encode", "block", "probe", "merge"])
+    ap.add_argument("cmd", choices=["finetune", "encode", "block", "probe", "merge", "ce_finetune", "ce_score"])
+    ap.add_argument("--pairs-path", default=None, help="ce_score: parquet with sidx, tidx")
+    ap.add_argument("--out-path", default=None, help="ce_score: output parquet")
     ap.add_argument("--work", default="work")
     ap.add_argument("--dataset", default="student_resource/dataset")
     ap.add_argument("--model-dir", default="work/neural_e5")
@@ -268,6 +335,10 @@ def main() -> None:
         block(work, args.split, args.k, args.qbatch)
     elif args.cmd == "merge":
         merge_candidates(work, args.split, args.k)
+    elif args.cmd == "ce_finetune":
+        ce_finetune(work, Path(CE_DIR), args.pairs, args.batch, args.lr)
+    elif args.cmd == "ce_score":
+        ce_score(work, Path(CE_DIR), args.split, Path(args.pairs_path), Path(args.out_path), max(args.batch, 256))
     else:
         probe(work, Path(args.dataset))
 
