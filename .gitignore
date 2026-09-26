@@ -1,6 +1,7 @@
 .DS_Store
 __MACOSX/
 *.zip
+*.tar.gz
 student_resource/
 dataset/
 data/

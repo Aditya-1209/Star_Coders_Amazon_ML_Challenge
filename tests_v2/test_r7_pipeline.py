@@ -72,6 +72,46 @@ class R7PipelineTest(unittest.TestCase):
                     capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+            # Exercise R9 against the small baseline produced above. Runtime tests
+            # run on AWS before the real dataset; source preparation does not run them.
+            r9work, r9out = root / "r9", root / "r9-output"
+            # The R9 interface stores baseline models inside its base workspace.
+            import shutil
+            shutil.copytree(model, work / "models")
+            def run_r9(stage):
+                command = [sys.executable, "-m", "er_v2.r9", stage, "--work", str(r9work),
+                           "--base", str(work), "--dataset", str(dataset), "--output", str(r9out),
+                           "--baseline-output", str(out), "--device", "cpu", "--threads", "2",
+                           "--rounds", "8", "--crossfit-rounds", "8", "--batch-rows", "200", "--hop-k", "2"]
+                result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-4000:])
+            for stage in ("crossfit", "expand_train", "fit", "select", "evaluate"):
+                run_r9(stage)
+            selection_path = r9work / "selection.json"
+            selection = json.loads(selection_path.read_text())
+            metrics = json.loads((r9work / "metrics.json").read_text())
+            self.assertIsNone(metrics["amazon_score"])
+            # Explicitly cover both export branches; the real selection is untouched
+            # outside this isolated temporary test directory.
+            selection["selected"] = "baseline"
+            selection_path.write_text(json.dumps(selection))
+            run_r9("expand_test")
+            run_r9("inference")
+            self.assertEqual((r9out / "matching_results.tsv").read_bytes(), (out / "matching_results.tsv").read_bytes())
+            selection["selected"] = "r9"
+            selection_path.write_text(json.dumps(selection))
+            run_r9("expand_test")
+            run_r9("inference")
+            for filename in ("matching_results.tsv", "candidate_pairs.tsv"):
+                rows = pl.read_csv(r9out / filename, separator="\t", infer_schema=False)
+                self.assertEqual(rows.height, 240)
+                self.assertEqual(rows["source1_entity_id"].n_unique(), 240)
+            if validator.exists():
+                result = subprocess.run([sys.executable, str(validator), "--matching", str(r9out / "matching_results.tsv"),
+                    "--candidate", str(r9out / "candidate_pairs.tsv"), "--test-dir", str(dataset / "test"), "--check-ids"],
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

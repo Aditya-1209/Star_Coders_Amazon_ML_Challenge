@@ -49,23 +49,27 @@ def hop_keep() -> pl.Expr:
             | ((pl.col("sup_addr_valid") == 0) & (pl.col("sup_name_tset") >= HOP_NAME_ONLY)))
 
 
-def anchors_of(stage2: pl.DataFrame) -> pl.DataFrame:
+def anchors_of(stage2: pl.DataFrame, threshold: float = ANCHOR) -> pl.DataFrame:
     """Confident matches after exclusivity: (sidx, a, pa)."""
-    a = stage2.filter(pl.col("p2") >= ANCHOR)
+    if not 0 <= threshold <= 1:
+        raise ValueError("Anchor threshold must be between zero and one")
+    a = stage2.filter(pl.col("p2") >= threshold)
     a = best_per_target(a, "p2")
     return a.select("sidx", a="tidx", pa="p2")
 
 
 def expand(anchors: pl.DataFrame, tkeys: pl.DataFrame, tindex: pl.DataFrame,
-           block_chunk: int = 2_000) -> pl.DataFrame:
+           block_chunk: int = 2_000, hop_k: int = HOP_K) -> pl.DataFrame:
     """Two-hop candidates: (sidx, tidx, hop_score, hop_rank, hop_n)."""
+    if not 1 <= hop_k < 65535:
+        raise ValueError("hop_k must be in [1, 65534]")
     if anchors.is_empty() or tindex.is_empty():
         return pl.DataFrame(schema=HOP_SCHEMA)
     ak = tkeys.join(anchors.select(idx="a").unique(), on="idx", how="semi")
-    nb = generate(ak, tindex, top_k=HOP_K + 1, chunk=block_chunk, verbose=False)
+    nb = generate(ak, tindex, top_k=hop_k + 1, chunk=block_chunk, verbose=False)
     nb = nb.rename({"sidx": "a", "tidx": "t"}).filter(pl.col("a") != pl.col("t"))
     # If the source record was absent from its own hits, HOP_K+1 still needs trimming.
-    nb = nb.filter(pl.col("brank").rank("ordinal").over("a") <= HOP_K)
+    nb = nb.filter(pl.col("brank").rank("ordinal").over("a") <= hop_k)
     x = anchors.join(nb, on="a")
     return x.group_by("sidx", "t").agg(
         hop_score=pl.col("bscore").max(),

@@ -26,7 +26,8 @@ def raw_tokens(name: str) -> list[str]:
     return [fix_ocr(t) for t in tokens(ascii_lower(name))]
 
 
-def learn(dataset: Path, min_count: int = 2, min_share: float = 0.5) -> dict[str, str]:
+def learn(dataset: Path, min_count: int = 2, min_share: float = 0.5,
+          learn_folds: list[int] | None = None, exclude_country: list[str] | None = None) -> dict[str, str]:
     d = dataset / "train"
     rd = lambda f: pl.read_csv(d / f, separator="\t", quote_char=None, infer_schema=False)
     gt = rd("train_ground_truth.tsv").with_columns(pl.col("matched_entity_ids").str.split(","))
@@ -34,7 +35,13 @@ def learn(dataset: Path, min_count: int = 2, min_share: float = 0.5) -> dict[str
     # Exclude tuning/holdout folds 3/4 from supervised normalization.
     from .train import fold_expr
     s1 = rd("train_source1.tsv").with_row_index("sidx").with_columns(pl.col("sidx").cast(pl.UInt32))
-    s1 = s1.filter(~fold_expr().is_in([3, 4])).select("entity_id", n1="business_name")
+    folds = [0, 1, 2, 5, 6, 7, 8, 9] if learn_folds is None else learn_folds
+    if not folds or set(folds) - {0, 1, 2, 5, 6, 7, 8, 9}:
+        raise ValueError("Supervised normalization may not use tuning/holdout folds 3/4")
+    s1 = s1.filter(fold_expr().is_in(folds))
+    if exclude_country:
+        s1 = s1.filter(~pl.col("country").is_in(exclude_country))
+    s1 = s1.select("entity_id", n1="business_name")
     tg = pl.concat([rd("train_source2.tsv"), rd("train_source3.tsv")]).select("entity_id", n2="business_name")
     tg = tg.filter(~pl.col("n2").str.contains(r"^[\x00-\x7FÀ-ɏ]*$"))
     pairs = gt.join(tg, left_on="matched_entity_ids", right_on="entity_id").join(
@@ -62,8 +69,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="student_resource/dataset")
     ap.add_argument("--out", default="models/v2/translit.json")
+    ap.add_argument("--learn-folds", nargs="+", type=int)
+    ap.add_argument("--exclude-country", nargs="*", default=[])
     args = ap.parse_args()
-    m = learn(Path(args.dataset))
+    m = learn(Path(args.dataset), learn_folds=args.learn_folds, exclude_country=args.exclude_country)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(m, ensure_ascii=False, indent=0, sort_keys=True), encoding="utf-8")
     print(f"{len(m):,} token mappings -> {args.out}")

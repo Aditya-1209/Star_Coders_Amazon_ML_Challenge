@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: One R9 GPU experiment. No inbound ports; SSM access; stops on completion or wall-time deadline.
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet in VpcId with an Internet Gateway route (no NAT gateway needed).
+  Bucket:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+    Description: Existing private S3 bucket in this region, using SSE-S3 encryption.
+  SourceKey:
+    Type: String
+    Default: r9/input/source.tar.gz
+    AllowedPattern: 'r9/input/[A-Za-z0-9_./-]+'
+  SourceSha256:
+    Type: String
+    AllowedPattern: '[a-f0-9]{64}'
+  DatasetKey:
+    Type: String
+    Default: r9/input/dataset.zip
+    AllowedPattern: 'r9/input/[A-Za-z0-9_./-]+'
+  RunId:
+    Type: String
+    Default: first-run
+    AllowedPattern: '[a-zA-Z0-9-]{1,50}'
+    Description: Use a new ID for each separate experiment; results use r9/results/RunId/.
+  InstanceType:
+    Type: String
+    Default: g5.4xlarge
+    AllowedValues: [g5.4xlarge, g6.4xlarge, g4dn.4xlarge]
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id
+  WallHours:
+    Type: Number
+    Default: 12
+    MinValue: 2
+    MaxValue: 24
+    Description: Stop deadline after each boot, including setup; runner reserves one hour for setup/export.
+  VolumeGiB:
+    Type: Number
+    Default: 200
+    MinValue: 150
+    MaxValue: 400
+  ExcludeCountry:
+    Type: String
+    Default: none
+    AllowedValues: [none, India, US]
+    Description: Optional clean transfer diagnostic; excluded country is report-only and no submission is generated.
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: R9 outbound access only; use Systems Manager Session Manager
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: R9InputsAndResults
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${Bucket}/${SourceKey}
+                  - !Sub arn:${AWS::Partition}:s3:::${Bucket}/${DatasetKey}
+              - Effect: Allow
+                Action: ['s3:PutObject', 's3:GetObject', 's3:AbortMultipartUpload']
+                Resource: !Sub arn:${AWS::Partition}:s3:::${Bucket}/r9/results/${RunId}/*
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${Bucket}
+                Condition:
+                  StringLike:
+                    s3:prefix: !Sub r9/results/${RunId}/*
+  Profile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref Role]
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref Profile
+      InstanceInitiatedShutdownBehavior: stop
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref SubnetId
+          GroupSet: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref VolumeGiB
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - {Key: Name, Value: !Sub 'r9-${RunId}'}
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -Eeuo pipefail
+          exec > >(tee -a /var/log/r9-bootstrap.log) 2>&1
+          export AWS_DEFAULT_REGION='${AWS::Region}'
+          export AWS_PAGER=''
+          export AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=3
+          fail() {
+            status=$?
+            trap - ERR
+            set +e
+            timeout 90 aws s3 cp /var/log/r9-bootstrap.log 's3://${Bucket}/r9/results/${RunId}/bootstrap.log'
+            shutdown -h now
+            exit "$status"
+          }
+          trap fail ERR
+          # Arm the boot deadline before network setup or package installation.
+          cat >/etc/systemd/system/r9-deadline.service <<'UNIT'
+          [Unit]
+          Description=Stop R9 EC2 instance at the boot wall-time deadline
+          [Service]
+          Type=oneshot
+          ExecStart=/sbin/shutdown -h now
+          UNIT
+          cat >/etc/systemd/system/r9-deadline.timer <<'UNIT'
+          [Unit]
+          Description=R9 cost guard (enabled on every boot)
+          [Timer]
+          OnBootSec=${WallHours}h
+          Unit=r9-deadline.service
+          [Install]
+          WantedBy=timers.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable --now r9-deadline.timer
+          command -v aws
+          mkdir -p /opt/r9/repo
+          aws s3 cp 's3://${Bucket}/${SourceKey}' /opt/r9/source.tar.gz
+          echo '${SourceSha256}  /opt/r9/source.tar.gz' | sha256sum --check -
+          python3 - <<'PY'
+          import tarfile
+          with tarfile.open('/opt/r9/source.tar.gz') as archive:
+              archive.extractall('/opt/r9/repo', filter='data')
+          PY
+          aws s3 cp 's3://${Bucket}/${DatasetKey}' /opt/r9/dataset.zip
+          bash /opt/r9/repo/scripts/aws/install_service.sh 's3://${Bucket}/r9/results/${RunId}' '${WallHours}' '${ExcludeCountry}' '${AWS::Region}'
+          trap - ERR
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  Results:
+    Value: !Sub s3://${Bucket}/r9/results/${RunId}/
+  Access:
+    Value: !Sub 'EC2 -> ${Instance} -> Connect -> Session Manager. Stack creation is not experiment completion.'

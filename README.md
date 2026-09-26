@@ -1,5 +1,12 @@
 # Star Coders - Amazon ML Challenge
 
+> **On `r9`, start with [the AWS R9 guide](docs/README_r9_AWS.md).**
+> R9 adds cross-fitted graph retrieval, equal-business loss weighting and a
+> validation gate with baseline fallback. The AWS workflow uses one GPU, resumes
+> compatible stages and stops the instance after completion/failure or a time limit.
+> **Prepared only: R9 training, runtime tests and AWS deployment have not been run.**
+> This branch does not yet have a measured R9 score.
+
 > **On `r7-improvements`, start with [the r7 experiment guide](docs/README_r7_overnight.md).**
 > It runs a CPU or CUDA experiment with phonetic retrieval, token-alignment
 > features, a train/test shift diagnostic, and validation-selected feature

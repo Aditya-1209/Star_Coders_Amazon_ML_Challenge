@@ -33,13 +33,15 @@ BLOCK_COLS = ["bscore", "nkeys", "brank", "b_rel_s", "b_rel_t", "t_rank", "t_nc"
 
 def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
           batch_rows: int = BATCH_ROWS, support_anchors: int = 100_000, workers: int = DEFAULT_THREADS,
-          prune_hops: bool = True, block_chunk: int = 2_000) -> pl.DataFrame:
+          prune_hops: bool = True, block_chunk: int = 2_000,
+          anchor_threshold: float = 0.5, hop_k: int = 10) -> pl.DataFrame:
     with TemporaryDirectory(prefix="graph-", dir=work) as tmp:
         paths = []
         for i, country in enumerate(split_countries(work, split)):
             log(f"building graph for {country}")
             frame = _build_country(split, work, stage2, feats_dir, log, batch_rows,
-                                   support_anchors, workers, prune_hops, block_chunk, country)
+                                   support_anchors, workers, prune_hops, block_chunk, country,
+                                   anchor_threshold, hop_k)
             path = Path(tmp) / f"{i}.parquet"
             frame.write_parquet(path)
             paths.append(path)
@@ -49,14 +51,14 @@ def build(split: str, work: Path, stage2: pl.DataFrame, feats_dir: Path, log,
 
 
 def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anchors,
-                   workers, prune_hops, block_chunk, country):
+                   workers, prune_hops, block_chunk, country, anchor_threshold=0.5, hop_k=10):
     """Return stage-3 feature rows for direct (pruned) + two-hop candidates."""
     s1, tg = load_split(work, split, country)
     s1 = s1.with_columns(pl.col("idx").cast(pl.UInt32))
     tg = tg.with_columns(pl.col("idx").cast(pl.UInt32))
     n_s2 = parquet_rows(work / "norm" / f"{split}_source2.parquet")
     stage2 = stage2.join(s1.select(sidx="idx"), on="sidx", how="semi")
-    anchors = anchors_of(stage2)
+    anchors = anchors_of(stage2, anchor_threshold)
     log(f"anchors {len(anchors):,}")
 
     if anchors.is_empty():
@@ -69,7 +71,7 @@ def _build_country(split, work, stage2, feats_dir, log, batch_rows, support_anch
         chunks = []
         for query in query_records.iter_slices(50_000):
             local_anchors = anchors.join(query.select(a="idx"), on="a", how="semi")
-            chunks.append(expand(local_anchors, make_keys(query), tindex, block_chunk))
+            chunks.append(expand(local_anchors, make_keys(query), tindex, block_chunk, hop_k))
         hop = pl.concat(chunks).group_by("sidx", "tidx").agg(
             pl.col("hop_score").max(), pl.col("hop_rank").min(),
             pl.col("hop_n").sum(), pl.col("hop_pa").max())
