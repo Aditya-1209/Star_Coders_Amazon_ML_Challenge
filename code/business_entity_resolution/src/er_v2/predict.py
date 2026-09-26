@@ -78,6 +78,9 @@ def main() -> None:
         scores.append(keep_candidates(current, prune, rescue))
     scores = pl.concat(scores)
     ctx = context_features(scores)
+    if meta.get("lookalike"):
+        from .train import LOOKALIKE
+        LOOKALIKE["on"] = True
     if meta.get("neural"):
         from .neural import Embeddings, neural_features
         ctx = ctx.join(neural_features(ctx, Embeddings(work, "test")), on=["sidx", "tidx"], how="left")

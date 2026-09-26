@@ -148,6 +148,36 @@ def load_train(folder: Path, folds: list[int], neg_frac: float = 1.0, exclude: p
     return pl.concat(parts)
 
 
+# ---- look-alike competition features (r9; off unless --lookalike) ---------------
+# France has dozens of same-name businesses per town that differ only by street
+# address. These features describe a candidate relative to the other stage-1
+# survivors of the same Source 1 business, so the model can learn "when many
+# candidates share the name, only the address decides". They are relative, not
+# corpus counts, so they do not depend on split size.
+LOOKALIKE = {"on": False}
+LOOKALIKE_FEATURES = ["la_same_name", "la_n_same_name", "la_addr_rank_same", "la_addr_gap",
+                      "la_name_gap", "la_n_house_eq", "la_house_unique"]
+
+
+def lookalike_features(df: pl.DataFrame) -> pl.DataFrame:
+    if not LOOKALIKE["on"] or df.is_empty() or "core_tset" not in df.columns:
+        return df
+    same = pl.col("core_tset") >= 90
+    house = pl.col("house_equal").cast(pl.Int8) if "house_equal" in df.columns else pl.col("first_num_eq").cast(pl.Int8)
+    df = df.with_columns(la_same_name=same.cast(pl.Int8), la_house=house)
+    return df.with_columns(
+        la_n_same_name=pl.col("la_same_name").sum().over("sidx").cast(pl.UInt16),
+        la_addr_rank_same=pl.when(pl.col("la_same_name") == 1).then(
+            (pl.col("addr_tset") * pl.col("la_same_name")).rank("min", descending=True).over("sidx")
+        ).cast(pl.Float32),
+        la_addr_gap=(pl.col("addr_tset").max().over("sidx") - pl.col("addr_tset")).cast(pl.Float32),
+        la_name_gap=(pl.col("core_tset").max().over("sidx") - pl.col("core_tset")).cast(pl.Float32),
+        la_n_house_eq=pl.col("la_house").sum().over("sidx").cast(pl.UInt16),
+    ).with_columns(
+        la_house_unique=((pl.col("la_house") == 1) & (pl.col("la_n_house_eq") == 1)).cast(pl.Int8),
+    ).drop("la_house")
+
+
 class ContextIndex:
     """Slice sorted context to a shard's source-ID bounds before its keyed join."""
     def __init__(self, context: pl.DataFrame):
@@ -159,8 +189,8 @@ class ContextIndex:
             return frame.join(self.frame.head(0), on=["sidx", "tidx"], how="inner")
         start = int(np.searchsorted(self.ids, frame["sidx"].min(), side="left"))
         stop = int(np.searchsorted(self.ids, frame["sidx"].max(), side="right"))
-        return frame.join(self.frame.slice(start, stop - start), on=["sidx", "tidx"],
-                          how="inner", maintain_order="left")
+        return lookalike_features(frame.join(self.frame.slice(start, stop - start), on=["sidx", "tidx"],
+                                             how="inner", maintain_order="left"))
 
 
 def excluded_sidx(work: Path, countries: list[str]) -> pl.Series | None:
@@ -283,6 +313,8 @@ def main() -> None:
     ap.add_argument("--extra-stage1-folds", action=argparse.BooleanOptionalAction, default=True,
                     help="use folds 8/9 as additional stage-1 training data")
     ap.add_argument("--neural-rescue-k", type=int, default=0)
+    ap.add_argument("--lookalike", action="store_true",
+                    help="stage-2 look-alike competition features (same-name candidates, address rank)")
     ap.add_argument("--neural", action="store_true",
                     help="add fine-tuned encoder similarity (work/emb) to stage 2; never to stage 1")
     ap.add_argument("--ghost-frac", type=float, default=0.0,
@@ -340,6 +372,9 @@ def main() -> None:
     print(f"stage1 scored + context, {time.time() - t:.0f}s", flush=True)
 
     ctx_cols = [c for c in ctx.columns if c not in ("sidx", "tidx")]
+    LOOKALIKE["on"] = bool(args.lookalike)
+    if args.lookalike:
+        ctx_cols += LOOKALIKE_FEATURES
     f2 = pair_features + ctx_cols
     ctx_full = ContextIndex(ctx)
     del ctx
@@ -444,6 +479,7 @@ def main() -> None:
     results["feature_version"] = FEATURE_VERSION
     results["neural"] = bool(args.neural)
     results["neural_rescue_k"] = args.neural_rescue_k
+    results["lookalike"] = bool(args.lookalike)
     results["feature_trials"] = trials
     results["feature_profile"] = "enhanced" if "token_align_min" in f2 else "baseline"
     results["stage1_feature_profile"] = "baseline"
