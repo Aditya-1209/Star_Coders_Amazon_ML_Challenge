@@ -1,5 +1,11 @@
 # Star Coders - Amazon ML Challenge
 
+> **On `r9_collab`, start with [the Google Cloud guide](docs/README_r9_Google_Cloud.md).**
+> It targets `g2-standard-16` (16 vCPUs, 64 GB RAM, NVIDIA L4 24 GB), with Cloud
+> Storage exports, persistent caches and a Compute Engine stop deadline.
+> **Use a GPU: this XGBoost pipeline has no TPU backend.** This branch is prepared
+> but has not been trained or deployed; runtime tests run first on the cloud VM.
+
 > **On `r9`, start with [the AWS R9 guide](docs/README_r9_AWS.md).**
 > R9 adds cross-fitted graph retrieval, equal-business loss weighting and a
 > validation gate with baseline fallback. The AWS workflow uses one GPU, resumes

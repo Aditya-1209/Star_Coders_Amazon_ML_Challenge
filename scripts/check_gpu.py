@@ -1,4 +1,4 @@
-"""Tiny GPU preflight executed on AWS, never during source preparation."""
+"""Tiny CUDA preflight for cloud runs, never executed during source preparation."""
 import json
 import numpy as np
 import xgboost as xgb
