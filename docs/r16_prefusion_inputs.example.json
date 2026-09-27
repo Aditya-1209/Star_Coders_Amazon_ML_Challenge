@@ -1,0 +1,75 @@
+{
+  "model_id": "REPLACE_WITH_REAL_R14_RUN_OR_COMMIT",
+  "score_stage": "pre_fusion",
+  "producer_note": "REPLACE: document existing raw predictions and verify actual score columns/scales; never substitute fusion_ab final scores.",
+  "norm_dir": "REPLACE_WITH_ORIGINAL_R14_NORM_DIRECTORY_OR_USE_train_source1_ids_WITH_ID_KEYED_FILES",
+  "components": {
+    "graph": {
+      "fit_folds": [
+        6,
+        7
+      ],
+      "selection_folds": [
+        3
+      ],
+      "score_kind": "probability",
+      "score_column": "score",
+      "files": {
+        "fold3": "REPLACE_WITH_EXISTING_graph_fold3.parquet",
+        "fold4": "REPLACE_WITH_EXISTING_graph_fold4.parquet",
+        "test": "REPLACE_WITH_EXISTING_graph_test.parquet"
+      }
+    },
+    "ce_a": {
+      "fit_folds": [
+        0,
+        1,
+        8
+      ],
+      "selection_folds": [
+        9
+      ],
+      "score_kind": "logit",
+      "score_column": "ce_logit",
+      "files": {
+        "fold3": "REPLACE_WITH_EXISTING_ce_a_fold3.parquet",
+        "fold4": "REPLACE_WITH_EXISTING_ce_a_fold4.parquet",
+        "test": "REPLACE_WITH_EXISTING_ce_a_test.parquet"
+      }
+    },
+    "ce_a_swapped": {
+      "fit_folds": [
+        0,
+        1,
+        8
+      ],
+      "selection_folds": [
+        9
+      ],
+      "score_kind": "logit",
+      "score_column": "ce_logit",
+      "files": {
+        "fold3": "REPLACE_WITH_EXISTING_ce_a_swapped_fold3.parquet",
+        "fold4": "REPLACE_WITH_EXISTING_ce_a_swapped_fold4.parquet",
+        "test": "REPLACE_WITH_EXISTING_ce_a_swapped_test.parquet"
+      }
+    },
+    "ce_b": {
+      "fit_folds": [
+        0,
+        1,
+        8
+      ],
+      "selection_folds": [
+        9
+      ],
+      "score_kind": "logit",
+      "score_column": "ce_logit",
+      "files": {
+        "fold3": "REPLACE_WITH_EXISTING_ce_b_fold3.parquet",
+        "fold4": "REPLACE_WITH_EXISTING_ce_b_fold4.parquet",
+        "test": "REPLACE_WITH_EXISTING_ce_b_test.parquet"
+      }
+    }
+  }
+}

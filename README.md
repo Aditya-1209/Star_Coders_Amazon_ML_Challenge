@@ -1,5 +1,13 @@
 # Star Coders - Amazon ML Challenge
 
+> **This branch: R16 fast CE fusion.** Start with [the fast-model guide](docs/README_r16_fast_ce_fusion.md).
+> It reuses the completed R12 run and existing pre-fusion R14 neural predictions;
+> no new venv or neural training. The 45-minute cap and original R12 fallback/gate
+> are preserved. Final cross-fitted R14 scores alone are insufficient; raw CE inputs
+> are still needed. Full-data runtime and accuracy are unmeasured.
+
+The sections below describe older experiments, not this branch’s launch procedure.
+
 > **R10:** follow [the desktop neural guide](docs/README_r10.md).
 > Built from `r8-neural` for i9-13900K / 32 GB / RTX 3060 12 GB: bounded ANN
 > retrieval, neural candidate rescue, a trained cross-encoder and validation-gated
