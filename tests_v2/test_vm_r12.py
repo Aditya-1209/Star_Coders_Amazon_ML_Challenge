@@ -18,6 +18,8 @@ class VMTests(unittest.TestCase):
     def fixture(self, root):
         (root / 'scripts').mkdir()
         shutil.copyfile(ROOT / f'scripts/vm_{self.version}.sh', root / f'scripts/vm_{self.version}.sh')
+        if self.version == 'r13':
+            shutil.copyfile(ROOT / 'scripts/vm_r13_job.sh', root / 'scripts/vm_r13_job.sh')
         requirements = root / 'code/business_entity_resolution'
         requirements.mkdir(parents=True)
         for name in ('requirements_v2.txt', 'requirements_r10.txt'):

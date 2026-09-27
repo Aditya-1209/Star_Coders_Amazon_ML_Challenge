@@ -83,3 +83,31 @@ missing-address diagnostics, and an actual website score are required before
 accepting the 98.5% objective as achieved. The reference is a rebuilt R12 graph
 model, not a previously submitted R12 artifact. Earlier stages use fold 3,
 past runs have inspected fold 4, and France lacks labeled validation examples.
+
+## Google Cloud optimization follow-up
+
+The VM profile now targets `g2-standard-32` explicitly: one L4 24 GB, 32 vCPUs
+and 128 GB RAM. The normalization window increases from 100,000 to 750,000 rows
+so its 25,000-row tasks can feed 30 workers instead of only four. A regression
+check verifies unchanged normalized records across window sizes. Other profiles
+retain their original window and precision defaults.
+
+CE training and scoring use native BF16 on the VM profile, with FP32 loss/logits
+and fused CUDA AdamW. Native support is checked before a full run, FP16 retains
+gradient scaling, and CPU tests retain FP32/unfused optimization. Run/model
+metadata records the choices. Existing exact GPU search, length-bucket inference,
+CUDA OOM batch reduction and 6-million-pair feature shards remain in place.
+
+A detached supervisor preserves the training exit status and schedules a
+ten-minute shutdown grace period after the launched job finishes or fails. It
+does not extend an earlier overall deadline and supports an early-shutdown
+opt-out. Tests invoke a real shell with fake Python and sudo commands to verify
+success, failure, opt-out and imminent-deadline behavior without stopping a host.
+The setup guide also specifies an independent 12-hour Compute Engine STOP limit.
+
+Validation: **68 tests, 64 passed and 4 Linux launcher tests skipped**, in
+67.128 seconds on the same Mac test environment. All four cloud-specific tests
+passed again after tightening the BF16 check to exclude emulated support.
+Both shell scripts pass `bash -n`; the VM command plan includes the new settings.
+No cloud VM was provisioned and no GPU speedup or leaderboard gain was measured.
+See [Google Cloud setup and current price references](../docs/GCP_r13.md).

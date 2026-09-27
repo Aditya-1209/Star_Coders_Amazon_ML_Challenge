@@ -11,6 +11,8 @@
 #
 # R13 adds stage-2-mined CE negatives, bounded neural sibling evidence,
 # and final features that exclude incomplete target competition context.
+# Stops the VM ten minutes after the job exits (success or failure). Set
+# R13_SHUTDOWN_ON_EXIT=0 to retain only the overall shutdown deadline.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SR=${1:?usage: bash scripts/vm_r13.sh /path/to/student_resource [--resume]}
@@ -18,6 +20,7 @@ shift || true
 for option in "$@"; do
   [ "$option" = --resume ] || { echo "Only --resume is accepted; tune via R13_* environment variables."; exit 2; }
 done
+case "${R13_SHUTDOWN_ON_EXIT:-1}" in 0|1) ;; *) echo 'R13_SHUTDOWN_ON_EXIT must be 0 or 1'; exit 2 ;; esac
 SR=$(realpath "$SR")
 for split in train test; do
   for side in 1 2 3; do
@@ -49,8 +52,9 @@ if [ "$(cat .venv-r13/.ready 2>/dev/null || true)" != "$DEPS" ]; then
   printf '%s\n' "$DEPS" > .venv-r13/.ready
 fi
 export PYTHONPATH=code/business_entity_resolution/src PYTHONUTF8=1 TOKENIZERS_PARALLELISM=false
-export POLARS_MAX_THREADS=30 OMP_NUM_THREADS=30
-.venv-r13/bin/python -c "import torch; assert torch.cuda.is_available(), 'no CUDA'; assert torch.cuda.get_device_properties(0).total_memory >= 20 * 1024**3, 'r13 profile needs 24 GB VRAM'; print('GPU', torch.cuda.get_device_name(0))"
+export POLARS_MAX_THREADS=${R13_THREADS:-30} OMP_NUM_THREADS=${R13_THREADS:-30}
+export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+.venv-r13/bin/python -c "import torch; assert torch.cuda.is_available(), 'no CUDA'; assert torch.cuda.get_device_properties(0).total_memory >= 20 * 1024**3, 'r13 profile needs 24 GB VRAM'; assert torch.cuda.is_bf16_supported(including_emulation=False), 'L4 profile needs native BF16'; print('GPU', torch.cuda.get_device_name(0))"
 
 HOURS=${R13_MAX_HOURS:-11}
 ARGS=(--profile vm --work work/r13 --output output/r13 --dataset "$SR/dataset" --validator "$SR/utils/validate_submission.py"
@@ -64,5 +68,7 @@ ARGS=(--profile vm --work work/r13 --output output/r13 --dataset "$SR/dataset" -
 MINUTES=$(.venv-r13/bin/python -c 'import math, sys; print(math.ceil(float(sys.argv[1]) * 60) + 60)' "$HOURS")
 sudo shutdown -c
 sudo shutdown -h "+$MINUTES"
-nohup .venv-r13/bin/python -u scripts/run_r13.py "${ARGS[@]}" "$@" >> work/r13/runner.log 2>&1 &
+export R13_STOP_EPOCH=$(( $(date +%s) + MINUTES * 60 ))
+export R13_SHUTDOWN_ON_EXIT=${R13_SHUTDOWN_ON_EXIT:-1}
+nohup bash scripts/vm_r13_job.sh "${ARGS[@]}" "$@" >> work/r13/runner.log 2>&1 &
 echo "r13 started (pid $!). Follow with: tail -f work/r13/runner.log"

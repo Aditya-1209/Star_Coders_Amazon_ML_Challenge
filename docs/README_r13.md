@@ -42,6 +42,11 @@ labels, so neither this gate nor local metrics certify its performance.
 
 ## L4 VM: one command
 
+Recommended: **Google Compute Engine `g2-standard-32`, one L4 24 GB, 32 vCPUs,
+128 GB RAM, Ubuntu 24.04 x86-64, 300 GB SSD Persistent Disk, on-demand**.
+See [the Google Cloud setup and cost guide](GCP_r13.md) for exact VM settings,
+driver installation and the creation command.
+
 Use a separate clone if R12 is still running, so its code and work directory
 stay stable. From the R13 checkout:
 
@@ -52,7 +57,10 @@ bash scripts/vm_r13.sh /absolute/path/to/student_resource
 The resource directory must contain `dataset/{train,test}/*.tsv` and
 `utils/validate_submission.py`. This launcher installs the pinned environment,
 checks CUDA and the official validator, runs the tests, then launches detached.
-It retains R12's 11-hour job deadline and schedules VM shutdown an hour later.
+It retains R12's 11-hour job deadline and a 12-hour fallback VM shutdown.
+After success or failure it brings shutdown forward to ten minutes after exit,
+unless the existing deadline is sooner. Logs and outputs remain on Persistent
+Disk. Set `R13_SHUTDOWN_ON_EXIT=0` to retain only the fallback deadline.
 It creates `.venv-r13`, `work/r13` and `output/r13`, with separate locks and
 durable progress files. It does not submit anything to the website.
 
@@ -91,10 +99,12 @@ shell launcher schedules machine shutdown.
 | --- | ---: | ---: |
 | Intended hardware | L4 24 GB / 128 GB RAM | RTX 3060 12 GB / 32 GB RAM |
 | CPU threads | 30 | 12 |
+| Normalization window / queued chunks | 750,000 / 30 | 100,000 / 4 |
 | Feature-shard pair cap | 6,000,000 | 2,000,000 |
 | Encoding batch | 1,024 | 256 |
 | CE train batch / accumulation | 64 / 1 | 16 / 4 |
 | CE gradient checkpointing | off | on |
+| CE mixed precision / optimizer | native BF16 / fused CUDA AdamW | FP16 / AdamW |
 | CE inference batch ceiling | 1,024 | 128 |
 | CE sampled training businesses | 250,000 | 180,000 |
 | Job deadline | 11 hours | 24 hours |
@@ -106,6 +116,14 @@ cap is one million: the R12 audit found only 833,203 eligible positive businesse
 so its two-million cap did not add training examples. Full-run time and peak
 memory for R13 have not been benchmarked on either GPU. Reserve values are
 minimum remaining space, not estimates of the entire dataset/work directory.
+
+The VM normalization window now feeds all 30 workers; the earlier 100,000-row
+window queued only four 25,000-row chunks. Records and normalization rules are
+unchanged. BF16 is applied to CE forward/backward and inference, with FP32 loss
+and stored logits. It requires native GPU support and disables unnecessary
+FP16 gradient scaling. CPU tests retain FP32; retrieval precision is unchanged.
+The requested precision and fused optimizer are recorded in the run settings
+and `ce_model/training.json`.
 
 Sibling feature construction reuses disk-backed embeddings; it does not train
 another encoder or allocate a dense target-by-target matrix. The anchor index

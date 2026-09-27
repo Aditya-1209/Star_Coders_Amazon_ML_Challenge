@@ -8,7 +8,8 @@ import run_r10
 PROFILES = {
     'vm': dict(threads=30, ce_batch=64, ce_accumulation=1, ce_checkpointing=False,
                ce_score_batch=1024, encode_batch=1024, shard_pairs=6000000,
-               ce_train_businesses=250000, max_hours=11, reserve_gb=20),
+               ce_train_businesses=250000, max_hours=11, reserve_gb=20,
+               prepare_buffer_rows=750000, ce_precision='bf16', ce_fused_optimizer=True),
     'desktop': dict(threads=12, ce_batch=16, ce_accumulation=4, ce_checkpointing=True,
                     ce_score_batch=128, encode_batch=256, shard_pairs=2000000,
                     ce_train_businesses=180000, max_hours=24, reserve_gb=12),

@@ -67,10 +67,14 @@ def parser():
     p.add_argument('--encoder', type=Path, help='Read-only reuse of an R8 encoder trained ONLY on folds 0/1/8/9')
     p.add_argument('--device', choices=['cuda', 'cpu'], default='cuda')
     p.add_argument('--threads', type=int, default=12)
+    p.add_argument('--prepare-buffer-rows', type=int, default=100000,
+                   help='normalization window; each 25,000 rows queues one CPU worker chunk')
     p.add_argument('--rounds', type=int, default=1500)
     p.add_argument('--ce-batch', type=int, default=16)
     p.add_argument('--ce-score-batch', type=int, default=128)
     p.add_argument('--ce-epochs', type=int, default=3)
+    p.add_argument('--ce-precision', choices=['fp16', 'bf16', 'auto'], default='fp16')
+    p.add_argument('--ce-fused-optimizer', action=argparse.BooleanOptionalAction, default=False)
     p.add_argument('--encoder-pairs', type=int, default=1000000)
     p.add_argument('--ce-train-businesses', type=int, default=180000)
     p.add_argument('--ce-accumulation', type=int, default=4)
@@ -114,7 +118,8 @@ def commands(args):
     def add(name, command, *outputs):
         stages[name] = (command, list(outputs))
     add('translit', [py, '-m', 'er_v2.translit', *data, '--out', str(w / 'translit.json')], w / 'translit.json')
-    add('prepare', module('prepare', *data, '--workers', args.threads, '--buffer-rows', 100000, '--translit', w / 'translit.json'), w / 'norm')
+    add('prepare', module('prepare', *data, '--workers', args.threads, '--buffer-rows', args.prepare_buffer_rows,
+        '--translit', w / 'translit.json'), w / 'norm')
     for split in ('train', 'test'):
         add('key_' + split, module('run_block', '--split', split, '--phonetic-k', 8, '--candidate-prefix', 'key'),
             w / f'key_{split}.parquet', w / f'key_{split}.json')
@@ -156,6 +161,7 @@ def commands(args):
     ceopts = ['--device', args.device, '--threads', str(min(args.threads, 8)), '--batch', str(args.ce_batch),
               '--score-batch', str(args.ce_score_batch), '--epochs', str(args.ce_epochs),
               '--accumulation', str(args.ce_accumulation), '--train-businesses', str(args.ce_train_businesses),
+              '--precision', args.ce_precision, *(['--fused-optimizer'] if args.ce_fused_optimizer else []),
               *([] if args.ce_checkpointing else ['--no-checkpointing'])]
     add('ce_train', module('r10_ce', 'train', *data, *ceopts,
         *(['--mine-stage2'] if args.r13_features else [])), w / 'ce_model')
@@ -188,6 +194,8 @@ def preflight(args):
         props = torch.cuda.get_device_properties(0)
         if props.total_memory < 10 * 1024**3:
             raise RuntimeError('Default profile needs at least 10 GiB VRAM')
+        if args.ce_precision == 'bf16' and not torch.cuda.is_bf16_supported(including_emulation=False):
+            raise RuntimeError('BF16 unavailable on this GPU; use --ce-precision fp16')
         # Fail if XGBoost silently falls back to CPU while PyTorch can use CUDA.
         model = xgb.train({'device': 'cuda', 'tree_method': 'hist'}, xgb.DMatrix(np.eye(4), label=[0, 1, 0, 1]), 1)
         if json.loads(model.save_config())['learner']['generic_param']['device'] == 'cpu':
@@ -238,7 +246,7 @@ def stop_child(child):
 def main(argv=None, argument_parser=None):
     p = argument_parser or parser()
     args = p.parse_args(argv)
-    if min(args.threads, args.rounds, args.ce_batch, args.ce_score_batch, args.ce_epochs, args.encode_batch,
+    if min(args.threads, args.prepare_buffer_rows, args.rounds, args.ce_batch, args.ce_score_batch, args.ce_epochs, args.encode_batch,
            args.nprobe, args.neural_k, args.search_k, args.ce_accumulation, args.encoder_pairs,
            args.ce_train_businesses, args.shard_pairs) < 1 or args.neural_k >= 65535 or not 0 <= args.rescue_k <= args.neural_k or not 0 < args.max_hours <= 72 or args.reserve_gb < 1 or not 0 < args.target_local <= 1 or (args.target_leaderboard is not None and not 0 < args.target_leaderboard <= 1):
         p.error('Invalid counts, rescue size, storage reserve or deadline')

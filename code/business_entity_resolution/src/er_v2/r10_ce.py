@@ -159,13 +159,28 @@ class PairTokens:
                 + self.lengths['tg'][frame['tidx'].to_numpy()].astype(np.int32))
 
 
-def score_logits(model, cache, frame, device, batch):
+def amp_dtype(device, precision='fp16'):
+    """L4 uses native BF16; preserve FP16 defaults for older experiment profiles."""
+    import torch
+    if precision not in ('auto', 'bf16', 'fp16'):
+        raise ValueError('Unknown CE precision')
+    if device != 'cuda':
+        return torch.float32
+    if precision == 'auto':
+        precision = 'bf16' if torch.cuda.is_bf16_supported(including_emulation=False) else 'fp16'
+    if precision == 'bf16' and not torch.cuda.is_bf16_supported(including_emulation=False):
+        raise RuntimeError('BF16 requested but not supported by this GPU; use --precision fp16')
+    return torch.bfloat16 if precision == 'bf16' else torch.float16
+
+
+def score_logits(model, cache, frame, device, batch, precision='fp16'):
     """Length-bucket inference, restored to input order; retry CUDA OOM losslessly.
 
     Cache a reduced batch ceiling across parquet windows and validation epochs.
     Never truncate text, skip a pair, or move computation silently onto the CPU.
     """
     import torch
+    dtype = amp_dtype(device, precision)
     order = np.argsort(cache.pair_lengths(frame), kind='stable')
     values = np.empty(len(frame), dtype=np.float32)
     size = min(batch, getattr(cache, 'score_batch_limit', batch))
@@ -174,7 +189,7 @@ def score_logits(model, cache, frame, device, batch):
         while start < len(order):
             ids = order[start:start + size]
             try:
-                with torch.autocast(device_type=device, dtype=torch.float16, enabled=device == 'cuda'):
+                with torch.autocast(device_type=device, dtype=dtype, enabled=device == 'cuda'):
                     logits = model(**cache.batch(frame[ids], device)).logits.reshape(-1)
                 values[ids] = logits.float().cpu().numpy()
                 del logits
@@ -208,6 +223,8 @@ def fit_model(args, train, valid):
     torch.set_num_threads(args.threads)
     if args.device == 'cuda' and not torch.cuda.is_available():
         raise RuntimeError('CUDA requested but unavailable; install a CUDA PyTorch wheel')
+    precision = getattr(args, 'precision', 'fp16')
+    dtype = amp_dtype(args.device, precision)
     rng = np.random.default_rng(args.seed)
     cache = PairTokens(args.work, 'train')
     model = AutoModelForSequenceClassification.from_pretrained(args.base_model, num_labels=1,
@@ -215,10 +232,12 @@ def fit_model(args, train, valid):
     model.config.problem_type = 'regression'  # custom binary-logit loss below, not model MSE
     if args.device == 'cuda' and args.checkpointing:
         model.gradient_checkpointing_enable()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    fused = args.device == 'cuda' and getattr(args, 'fused_optimizer', False)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01,
+                                 **({'fused': True} if fused else {}))
     steps = math.ceil(math.ceil(len(train) / args.batch) / args.accumulation) * args.epochs
     schedule = get_linear_schedule_with_warmup(optimizer, max(1, int(steps * .06)), steps)
-    scaler = torch.amp.GradScaler('cuda', enabled=args.device == 'cuda')
+    scaler = torch.amp.GradScaler('cuda', enabled=args.device == 'cuda' and dtype == torch.float16)
     best, stale, history = float('inf'), 0, []
     target = args.work / 'ce_model'
     target.mkdir(exist_ok=True)
@@ -236,7 +255,7 @@ def fit_model(args, train, valid):
                                  drop_address=rng.random(len(part)) < .10)
             y = torch.tensor(part['label'].to_numpy(), device=args.device, dtype=torch.float32)
             w = torch.tensor(part['w'].to_numpy(), device=args.device)
-            with torch.autocast(device_type=args.device, dtype=torch.float16, enabled=args.device == 'cuda'):
+            with torch.autocast(device_type=args.device, dtype=dtype, enabled=args.device == 'cuda'):
                 logits = model(**inputs).logits.reshape(-1)
                 raw_loss = weighted_bce(logits, y, w)
                 # Correct denominator for the last, shorter accumulation group.
@@ -257,7 +276,7 @@ def fit_model(args, train, valid):
             if j % 200 == 0:
                 print(f'CE epoch {epoch + 1}: {rows:,}/{len(train):,}, loss {loss_sum / rows:.5f}', flush=True)
         model.eval()
-        logits = torch.from_numpy(score_logits(model, cache, valid, args.device, args.score_batch))
+        logits = torch.from_numpy(score_logits(model, cache, valid, args.device, args.score_batch, precision))
         value = float(weighted_bce(logits, torch.tensor(valid['label'].to_numpy()),
                                    torch.tensor(valid['w'].to_numpy())))
         if not np.isfinite(value):
@@ -275,6 +294,7 @@ def fit_model(args, train, valid):
     save_json(target / 'training.json', {'base_model': args.base_model, 'revision': BASE_REVISION if args.base_model == BASE_MODEL else None, 'train_folds': TRAIN_FOLDS,
         'early_stopping_folds': VALID_FOLDS, 'train_pairs': len(train), 'valid_pairs': len(valid),
         'max_length': args.max_length, 'batch': args.batch, 'accumulation': args.accumulation,
+        'amp_dtype': str(dtype), 'fused_optimizer': fused,
         'positive_sampling': 'all positives for selected businesses',
         'negative_sampling': ('stage2 top-2 + lexical + ANN + random, refill, at most 5/business'
                               if getattr(args, 'mine_stage2', False) else 'lexical + ANN + random'),
@@ -308,7 +328,7 @@ def score(args):
             frame = pl.from_arrow(batch).filter(hop_keep()).select('sidx', 'tidx')
             if frame.is_empty():
                 continue
-            values = score_logits(model, cache, frame, args.device, args.score_batch)
+            values = score_logits(model, cache, frame, args.device, args.score_batch, getattr(args, 'precision', 'fp16'))
             result = frame.with_columns(ce_logit=pl.Series(values, dtype=pl.Float32))
             if not np.isfinite(result['ce_logit'].to_numpy()).all():
                 raise RuntimeError('Non-finite cross-encoder scores')
@@ -344,6 +364,8 @@ def main():
     p.add_argument('--threads', type=int, default=8)
     p.add_argument('--seed', type=int, default=1010)
     p.add_argument('--lr', type=float, default=2e-5)
+    p.add_argument('--precision', choices=['fp16', 'bf16', 'auto'], default='fp16')
+    p.add_argument('--fused-optimizer', action='store_true', help='use fused CUDA AdamW; CPU remains unfused')
     p.add_argument('--mine-stage2', action='store_true', help='R13: mine out-of-sample stage-2 false positives')
     args = p.parse_args()
     if min(args.max_length, args.batch, args.score_batch, args.accumulation, args.epochs,
