@@ -253,5 +253,45 @@ class R10PipelineTest(unittest.TestCase):
                         capture_output=True, text=True, timeout=30)
                     self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
 
+            # R15 reuses this complete neural/graph run without refitting it.
+            # Exercise real feature joins, classifiers, gate and both inference
+            # choices, including France and empty-match rows.
+            (work / 'shift_check.json').write_text('{"allow_enhanced": false}')
+            new_work, new_out = root / 'r15', root / 'r15-output'
+            common = ['--base-work', work, '--work', new_work, '--output', new_out,
+                      '--dataset', dataset, '--device', 'cpu', '--threads', 2, '--rounds', 8]
+            parent_files = [work / 'selection.json', work / 'r10_models.json', work / 'ce_train.parquet']
+            originals = {path: path.read_bytes() for path in parent_files}
+            def r15_run(stage, *extra):
+                result = subprocess.run([sys.executable, '-m', 'er_v2.r15', stage, *map(str, common), *extra],
+                    env=env, capture_output=True, text=True, timeout=180)
+                self.assertEqual(result.returncode, 0, stage + '\n' + result.stdout[-1000:] + result.stderr[-4000:])
+            r15_run('audit')
+            for split in ('train', 'test'):
+                r15_run('prepare', '--split', split)
+            for stage in ('fit', 'select', 'evaluate', 'inference'):
+                r15_run(stage)
+            chosen_path = new_work / 'selection.json'
+            choice = json.loads(chosen_path.read_text())
+            frozen = chosen_path.read_bytes()
+            r15_run('evaluate')
+            self.assertEqual(chosen_path.read_bytes(), frozen)
+            for selected in ('r12', 'r15'):
+                choice['selected'] = selected
+                chosen_path.write_text(json.dumps(choice))
+                r15_run('inference')
+                actual = pl.read_csv(new_out / 'matching_results.tsv', separator='\t', infer_schema=False)
+                self.assertEqual(actual.height, 240)
+                if selected == 'r12':
+                    self.assertEqual((new_out / 'matching_results.tsv').read_bytes(),
+                                     (out / 'matching_results.tsv').read_bytes())
+                if validator.exists():
+                    check = subprocess.run([sys.executable, str(validator), '--matching', str(new_out / 'matching_results.tsv'),
+                        '--candidate', str(new_out / 'candidate_pairs.tsv'), '--test-dir', str(dataset / 'test'), '--check-ids'],
+                        capture_output=True, text=True, timeout=30)
+                    self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            for path, original in originals.items():
+                self.assertEqual(path.read_bytes(), original, str(path))
+
 if __name__ == '__main__':
     unittest.main()

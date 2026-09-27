@@ -1,5 +1,11 @@
 # Star Coders - Amazon ML Challenge
 
+> **R15:** follow [the GCP follow-up guide](docs/README_r15.md). Reuses the
+> completed R12 models and scores, adds CE-selected cross-source evidence,
+> and gates the new final classifier against the actual R12 submission model.
+> R12 scored 0.990388 locally and 0.984 online (user-reported). R15's
+> leaderboard target is 0.99; its full-data result is not yet measured.
+
 > **R10:** follow [the desktop neural guide](docs/README_r10.md).
 > Built from `r8-neural` for i9-13900K / 32 GB / RTX 3060 12 GB: bounded ANN
 > retrieval, neural candidate rescue, a trained cross-encoder and validation-gated

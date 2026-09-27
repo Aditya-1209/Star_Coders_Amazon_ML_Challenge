@@ -24,7 +24,9 @@ Candidate oracle macro F0.5: 0.999081939. Selection gate passed on fold 3;
 fold 4 was used for reporting. The inherited `selected: r10` and
 `r10-ce-ann-1` names identify the fusion implementation within this r12 run.
 
-The 0.99 local target was met. **No leaderboard result is recorded here.**
+The 0.99 local target was met. The user subsequently reported a **0.984
+leaderboard score** for this submission. Raw run metrics remain unchanged:
+their leaderboard field was unmeasured at the time the VM run finished.
 France has no training labels, so there is no measured France holdout score.
 
 Cross-encoder validation improved across all three epochs:
