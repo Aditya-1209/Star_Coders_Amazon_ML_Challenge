@@ -76,9 +76,10 @@ branch check after this update found R13 still at `bfb2ef3`, with no completed
 R13 scores available locally, and no R14 branch. Do not spend another full
 training run merely to produce a differently named output.
 
-The user subsequently confirmed that an R12 export archive was downloaded
-and sent to the R14 teammate. Verify that existing archive before requesting
-anything more; it has not yet been made accessible in this workspace.
+The existing R12 archive was subsequently received and fully verified here:
+all score/ID rows pass, validation metrics reproduce and the test submission
+is byte-identical to R12. See [the verification](r12_confidence_export_verified.md).
+No additional R12 export is needed; use the archive already sent to R14.
 Use [the R12 export checks](../docs/README_r12_evidence_export.md) to verify
 final fused scores and entity/source mappings. Align comparison scores on
 entity IDs and the original R12 business partitions; audit their training

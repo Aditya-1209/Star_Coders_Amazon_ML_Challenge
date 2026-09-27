@@ -5,16 +5,17 @@
 The user reports that R12 scored **0.984 publicly** and **0.990388 on fold 4**.
 R16-fast and R15 address-rescue both completed and retained R12. The existing
 R12 export archive has already been downloaded and sent to the R14 teammate.
-Inspect that archive before requesting or running any additional export.
-Its contents have not yet been available in this workspace for verification.
+That archive has now been inspected locally: all 29,599,341 scored pairs and
+ID mappings pass, 3A/3B/fold-4 results reproduce, and the test submission is
+byte-identical to published R12. **No additional R12 export is needed.**
+See [the archive verification](../reports/r12_confidence_export_verified.md).
 
 The next experiment is an **R12–R14 complementarity audit and small score-blend
-comparison**, using completed predictions. First verify final fused R12 scores,
-entity/source mappings, original 3A/3B/fold-4 membership, all Source 1 rows and
-compatible R14 training provenance. Different filenames alone do not mean
-evidence is missing: `export_r12_scores.py` in the supplied screenshot is not
-the `export_r12_evidence.py` script in this checkout. Inspect the actual files
-and producing script rather than assuming either schema.
+comparison**, using completed predictions. The R12 score, ID, partition and
+all-business checks are complete. Align R14 on those same business/entity IDs
+and verify compatible R14 training provenance before fitting a combination.
+The supplied archive's different schema and producer filename do not require
+conversion through this repository's exporter.
 
 On 3A, compare R14's corrections and new errors against frozen R12, including
 missing-address pairs and candidates unique to each model. If there is useful
@@ -27,9 +28,9 @@ report-only; these previously examined partitions are not pristine holdouts.
 
 Preserve `work/r12` and `.venv-r12`. Do not launch the full training recipe
 below, rerun either failed fast experiment, or rerun an exporter for this
-follow-up. If inspection finds a gap, collect only that specific existing
-artifact or missing evidence. The archive location/contents and R14 predictions
-are still needed before this comparison can run here.
+follow-up. The verified archive and shared organizer data supply the R12
+evidence. R14 predictions and their training provenance are still needed
+before this comparison can run here.
 
 See [the completed rescue handoff](../reports/r15_rescue_completed_handoff.md)
 and [the export contents and checks](README_r12_evidence_export.md).

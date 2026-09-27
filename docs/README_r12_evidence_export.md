@@ -1,13 +1,15 @@
 # Export completed R12 evidence for comparison
 
-**An R12 export archive already exists.** The user reports that it was
-downloaded and sent to the R14 teammate. Inspect that archive first; the
-export command below is not a request to regenerate it. This workspace has
-not yet received its path or contents. The screenshot refers to a producer
-named `export_r12_scores.py`, which is not present in the checked branches;
-do not assume it is the same as this repository's `export_r12_evidence.py`.
+**The existing R12 export archive is now verified.** `r12_export.tar`, received
+directly and already sent to the R14 teammate, contains final score tables for
+folds 3/4 and test with entity IDs. All rows were checked; the saved validation
+results and exact published test TSV reproduce. It is sufficient with the
+shared organizer dataset. **Do not regenerate it.** See
+[the verification and join instructions](../reports/r12_confidence_export_verified.md).
+The command below remains a reference for this repository's different
+`export_r12_evidence.py` tool, not a required next step.
 
-Existing files are sufficient if they supply equivalent final scores, stable
+In general, existing files are sufficient if they supply equivalent final scores, stable
 entity/source mappings, the original business partitions, full truth and all
 Source 1 rows, with selection/training provenance and reproduced R12 results.
 The filenames below describe this repository's exporter; equivalent evidence
@@ -92,7 +94,11 @@ has `manifest.json` and no `_INCOMPLETE` marker.
   metadata. `manifest.json` records reproduction checks, provenance and output
   checksums. Weights, feature tables and raw business text are not copied.
 
-Across independent runs, join on
+For the verified `r12_export.tar`, join on `(split, sid, tid)`: target entity
+IDs were checked to be unique across Source 2 and Source 3 within each split.
+No additional source-ID mapping export is required.
+
+For this reference exporter's expanded column schema, across independent runs, join on
 `(split, source1_entity_id, target_source, target_entity_id)`. Never join on
 `sidx`/`tidx` alone. R14 must be evaluated on the **R12 business-ID partition**,
 not a newly hashed row order. Its scores for those businesses must also have
@@ -110,7 +116,9 @@ does not establish a 99% public score.
 Also preserve the completed R16-fast `selection.json`, `metrics.json`,
 `baseline_audit.json`, `run.json`, `result.json`, `result.md` and `logs/` from
 `~/Star_Coders_r16_fast/work/r16_fast`. Record `git rev-parse HEAD` and
-`git diff --binary HEAD` in that checkout. Those actual run artifacts and the
-R13/R14 prediction evidence are still needed to complete the proposed comparison.
+`git diff --binary HEAD` in that checkout. R14 prediction evidence and its
+training provenance are still needed for the proposed comparison; no further
+R12 score export is required.
 Also preserve the rescue run's corresponding files and logs from its actual
-work directory. Raw VM run artifacts have not yet been received here.
+work directory. The full R16-fast/rescue logs have not been received here;
+their absence does not require another R12 export.

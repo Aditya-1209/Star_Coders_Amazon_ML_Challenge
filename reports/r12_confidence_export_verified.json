@@ -1,0 +1,225 @@
+{
+  "archive_score_tables": {
+    "r12_fold3.parquet": {
+      "rows": 2657314,
+      "row_groups": 32,
+      "all_scores_finite_and_in_range": true,
+      "all_ids_match_organizer_row_indices": true,
+      "all_pairs_within_country": true,
+      "duplicate_pairs": 0,
+      "expected_businesses": 220699,
+      "businesses_with_candidates": 220699,
+      "businesses_without_candidates": 0,
+      "source2_pairs": 1218547,
+      "source3_pairs": 1438767,
+      "score_min": 9.780863763353409e-08,
+      "score_max": 0.9999993443489075,
+      "score_mean": 0.2866318166993654
+    },
+    "r12_fold4.parquet": {
+      "rows": 2657751,
+      "row_groups": 32,
+      "all_scores_finite_and_in_range": true,
+      "all_ids_match_organizer_row_indices": true,
+      "all_pairs_within_country": true,
+      "duplicate_pairs": 0,
+      "expected_businesses": 220507,
+      "businesses_with_candidates": 220507,
+      "businesses_without_candidates": 0,
+      "source2_pairs": 1219495,
+      "source3_pairs": 1438256,
+      "score_min": 1.0820488682838914e-07,
+      "score_max": 0.9999993443489075,
+      "score_mean": 0.28649979036574785
+    },
+    "r12_test.parquet": {
+      "rows": 24284276,
+      "row_groups": 192,
+      "all_scores_finite_and_in_range": true,
+      "all_ids_match_organizer_row_indices": true,
+      "all_pairs_within_country": true,
+      "duplicate_pairs": 0,
+      "expected_businesses": 1732544,
+      "businesses_with_candidates": 1732544,
+      "businesses_without_candidates": 0,
+      "source2_pairs": 11232244,
+      "source3_pairs": 13052032,
+      "score_min": 7.992413486590522e-08,
+      "score_max": 0.9999995231628418,
+      "score_mean": 0.24546191231126596
+    }
+  },
+  "reproduced_metrics": {
+    "3A": {
+      "overall": {
+        "macro_f05": 0.9904225628407863,
+        "pair_precision": 0.9987077055069977,
+        "pair_recall": 0.9740394220058259,
+        "anchors": 110437
+      },
+      "by_country": {
+        "US": {
+          "macro_f05": 0.9896003001739957,
+          "pair_precision": 0.9986715601287911,
+          "pair_recall": 0.9718953646853622,
+          "anchors": 65905
+        },
+        "India": {
+          "macro_f05": 0.991639468011334,
+          "pair_precision": 0.9987608918927874,
+          "pair_recall": 0.9772112834942266,
+          "anchors": 44532
+        }
+      },
+      "matches_published_result": true
+    },
+    "3B": {
+      "overall": {
+        "macro_f05": 0.9905680734167244,
+        "pair_precision": 0.9987020525305945,
+        "pair_recall": 0.9739557263071275,
+        "anchors": 110262
+      },
+      "by_country": {
+        "India": {
+          "macro_f05": 0.9916804682684992,
+          "pair_precision": 0.998782333748192,
+          "pair_recall": 0.9764477621756716,
+          "anchors": 44036
+        },
+        "US": {
+          "macro_f05": 0.9898284028992125,
+          "pair_precision": 0.9986486546954775,
+          "pair_recall": 0.9723049979088247,
+          "anchors": 66226
+        }
+      },
+      "matches_published_result": true
+    },
+    "fold4": {
+      "overall": {
+        "macro_f05": 0.9903875328365094,
+        "pair_precision": 0.9986615796850081,
+        "pair_recall": 0.9739132825458835,
+        "anchors": 220507
+      },
+      "by_country": {
+        "US": {
+          "macro_f05": 0.9896034501978568,
+          "pair_precision": 0.9986830710692924,
+          "pair_recall": 0.9721277106855059,
+          "anchors": 132439
+        },
+        "India": {
+          "macro_f05": 0.991566657156132,
+          "pair_precision": 0.9986295600553524,
+          "pair_recall": 0.9765859175554953,
+          "anchors": 88068
+        }
+      },
+      "matches_published_result": true
+    }
+  },
+  "versions": {
+    "polars": "1.44.2",
+    "numpy": "2.5.3"
+  },
+  "status": "complete",
+  "fit_or_threshold_tuning_performed": false,
+  "train_source_counts": {
+    "source1": 2206821,
+    "source2": 5034616,
+    "source3": 5285603
+  },
+  "fold4_candidate_oracle": {
+    "macro_f05": 0.9990819393369621,
+    "pair_precision": 1.0,
+    "pair_recall": 0.9970517270045834,
+    "anchors": 220507
+  },
+  "test_source_counts": {
+    "source1": 1732544,
+    "source2": 4887273,
+    "source3": 5082316
+  },
+  "test_reproduction": {
+    "sha256": "418fce53733fc3c01dc4da00efe0409e2a3eb14faa17910cb6cb4b32169e5953",
+    "bytes": 97709701,
+    "byte_identical_to_published_submission": true,
+    "matching_pairs": 5840600,
+    "source1_rows": 1732544,
+    "empty_rows": 99787
+  },
+  "sufficient_r12_scores_for_r14_comparison": true,
+  "additional_r12_export_needed": false,
+  "dependencies": [
+    "Same organizer data for full truth and all-business/source membership",
+    "R14 predictions with entity IDs and compatible training provenance"
+  ],
+  "limitation": "Exact producing script and original model checkpoints are not in the archive; this audit verifies all exported rows and reproduces the frozen reported decisions/results.",
+  "archive": {
+    "archive_bytes": 413388800,
+    "archive_sha256": "d27e504b931b1cc46a17142599b89e71977ab226df4a298aaa9344405154d05c",
+    "filename": "r12_export.tar",
+    "files": [
+      {
+        "name": "r12_fold4.parquet",
+        "bytes": 37140238,
+        "sha256": "d0323d3177cce4000a754e942b346300b9e84bf1542f31cdcb3b9555d114a0f1",
+        "rows": 2657751,
+        "row_groups": 32,
+        "schema": "sidx: uint32\ntidx: uint32\nscore: float\nsid: large_string\ntid: large_string",
+        "created_by": "Polars"
+      },
+      {
+        "name": "r12_test.parquet",
+        "bytes": 339083927,
+        "sha256": "88c147f628d69412c767760c72227da0e564a3ce6803986eefd5f69f374ff287",
+        "rows": 24284276,
+        "row_groups": 192,
+        "schema": "sidx: uint32\ntidx: uint32\nscore: float\nsid: large_string\ntid: large_string",
+        "created_by": "Polars"
+      },
+      {
+        "name": "selection.json",
+        "bytes": 3401,
+        "sha256": "7544d6cd84325e98d56662eaa45654dfbd81983c99e8f73fee048e765cdc0701",
+        "identical_to_published_r12_bytes": true,
+        "identical_to_published_r12_json": true
+      },
+      {
+        "name": "r12_fold3.parquet",
+        "bytes": 37149608,
+        "sha256": "53fb78abe8d72f30c4b3646f13131a5d7eaaf9ba94530f463c27d6c81877a2dd",
+        "rows": 2657314,
+        "row_groups": 32,
+        "schema": "sidx: uint32\ntidx: uint32\nscore: float\nsid: large_string\ntid: large_string",
+        "created_by": "Polars"
+      },
+      {
+        "name": "metrics.json",
+        "bytes": 5041,
+        "sha256": "18880f4fd9460cab19c6d6eaad8bdb0720ac4aa4823f7b1b52c4f8a22805ef48",
+        "identical_to_published_r12_bytes": true,
+        "identical_to_published_r12_json": true
+      }
+    ]
+  },
+  "verified_at_utc": "2026-09-27T13:39:22.906208+00:00",
+  "r12_reference_commit": "7ba5312fa6df86e12e3d42b97ce1168d8a5d23ce",
+  "join_keys": [
+    "split",
+    "sid",
+    "tid"
+  ],
+  "target_entity_ids_unique_across_sources": true,
+  "fold3_partition_rule": {
+    "polars_version": "1.44.2",
+    "index_dtype": "UInt32",
+    "seed": 1010,
+    "expression": "sidx.hash(seed=1010) % 2",
+    "3A": 0,
+    "3B": 1
+  },
+  "total_exported_pairs": 29599341
+}
