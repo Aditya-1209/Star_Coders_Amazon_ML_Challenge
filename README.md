@@ -1,10 +1,5 @@
 # Star Coders - Amazon ML Challenge
 
-> **R12 France update:** use [the cached L4 guide](docs/README_r12_france.md).
-> Reuses completed `work/r12`, adds France transfer features and weighting,
-> preserves India/US answers, and caps the follow-up job at 3.5 hours by default.
-> This cap is not a measured ETA; France accuracy improvement is unmeasured.
-
 > **R10:** follow [the desktop neural guide](docs/README_r10.md).
 > Built from `r8-neural` for i9-13900K / 32 GB / RTX 3060 12 GB: bounded ANN
 > retrieval, neural candidate rescue, a trained cross-encoder and validation-gated

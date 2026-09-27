@@ -95,9 +95,6 @@ def fix_ocr(tok: str) -> str:
 
 
 TRANSLIT: dict[str, str] = {}
-# The learned dictionary is Indic, not a general accent correction table.
-# Applying it to French accents can change unrelated words (e.g. mam -> maa).
-_INDIC = re.compile(r"[\u0900-\u0dff\ua8e0-\ua8ff]")
 
 
 def load_translit(path) -> None:
@@ -112,7 +109,7 @@ def load_translit(path) -> None:
 def norm_name(raw: str | None) -> tuple[str, str]:
     """Return (canonical full name, core name without legal words)."""
     toks = [fix_ocr(t) for t in tokens(ascii_lower(raw))]
-    if TRANSLIT and raw and _INDIC.search(raw):
+    if TRANSLIT and raw and not raw.isascii():
         toks = [TRANSLIT.get(t, t) for t in toks]
     full = [CANON.get(t, t) for t in toks]
     core = [t for t in toks if t not in LEGAL]
