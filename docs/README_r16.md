@@ -153,10 +153,12 @@ pairs later rejected by the business classifier. Every test Source 1 record,
 including France and empty-match businesses, remains in both files.
 
 See [the implementation and validation record](../reports/r16_review.md).
+
 ## Completed R12 / R16-fast handoff
 
 To compare existing runs without retraining, see
 [the frozen R12 evidence exporter](README_r12_evidence_export.md). It exports
 final confidence scores with entity/source IDs and verifies saved results.
-R16-fast's supplied results retained R12; the full R16 recipe below has no
-measured public result from this workspace.
+R16-fast and the subsequently completed R15 address-rescue both retained R12.
+See the [rescue result and next evidence checks](../reports/r15_rescue_completed_handoff.md).
+The full R16 recipe above has no measured public result from this workspace.

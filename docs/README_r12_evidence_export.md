@@ -3,8 +3,11 @@
 The supplied 27 September handoff reports that R16-fast retained R12: its 3B
 gain was 0.00003255, below the unchanged 0.0005 gate, with a negative lower
 confidence bound. That result is a successful fallback, not a new measured
-improvement. The address-rescue experiment already exists on
-`codex/r15-address-rescue` at `78ee707`; its full-data result was not supplied.
+improvement. The subsequent address-rescue run of `78ee707` also retained R12:
+its 3B gain was 0.00001222537 with a negative lower confidence bound.
+See the [completed rescue handoff](../reports/r15_rescue_completed_handoff.md)
+for the reported results and remaining artifact requirements. All three
+related fast proposals retained R12; avoid resubmitting their fallback outputs.
 R14 code and scores are not present in this repository's remote branches.
 
 The published R12 selection is the mean of its final pair-weighted and
@@ -93,4 +96,6 @@ Also preserve the completed R16-fast `selection.json`, `metrics.json`,
 `baseline_audit.json`, `run.json`, `result.json`, `result.md` and `logs/` from
 `~/Star_Coders_r16_fast/work/r16_fast`. Record `git rev-parse HEAD` and
 `git diff --binary HEAD` in that checkout. Those actual run artifacts and the
-R14 prediction evidence are still needed to complete the proposed comparison.
+R13/R14 prediction evidence are still needed to complete the proposed comparison.
+Also preserve the rescue run's corresponding files and logs from its actual
+work directory. Raw VM run artifacts have not yet been received here.
