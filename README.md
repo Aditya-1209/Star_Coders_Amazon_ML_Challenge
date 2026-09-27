@@ -1,5 +1,10 @@
 # Star Coders - Amazon ML Challenge
 
+> **R15 address rescue:** [missing-address specialist guide](docs/README_r15_rescue.md)
+> on `codex/r15-address-rescue`. Targets the measured rejected-match errors,
+> reuses R12 neural evidence and preserves its original selection gate.
+> Use a separate checkout after R16 finishes; full-data score is unmeasured.
+
 > **R15:** follow [the GCP follow-up guide](docs/README_r15.md). Reuses the
 > completed R12 models and scores, adds CE-selected cross-source evidence,
 > and gates the new final classifier against the actual R12 submission model.

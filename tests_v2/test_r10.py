@@ -290,6 +290,36 @@ class R10PipelineTest(unittest.TestCase):
                         '--candidate', str(new_out / 'candidate_pairs.tsv'), '--test-dir', str(dataset / 'test'), '--check-ids'],
                         capture_output=True, text=True, timeout=30)
                     self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            # Missing-address specialist: all stages and both submission paths.
+            rescue_work, rescue_out = root / 'rescue', root / 'rescue-output'
+            rescue_common = ['--base-work', work, '--work', rescue_work, '--output', rescue_out,
+                             '--dataset', dataset, '--device', 'cpu', '--threads', 2, '--rounds', 8]
+            def rescue_run(stage, *extra):
+                result = subprocess.run([sys.executable, '-m', 'er_v2.r15_rescue', stage, *map(str, rescue_common), *extra],
+                    env=env, capture_output=True, text=True, timeout=180)
+                self.assertEqual(result.returncode, 0, stage + '\n' + result.stdout[-1000:] + result.stderr[-4000:])
+            for split in ('train', 'test'):
+                rescue_run('prepare', '--split', split)
+            for stage in ('fit', 'select', 'evaluate', 'inference'):
+                rescue_run(stage)
+            rescue_selection = rescue_work / 'selection.json'
+            frozen = rescue_selection.read_bytes()
+            choice = json.loads(frozen)
+            self.assertEqual(choice['gate']['minimum_gain'], .0005)
+            rescue_run('evaluate')
+            self.assertEqual(rescue_selection.read_bytes(), frozen)
+            for selected in ('r12', 'r15_rescue'):
+                choice['selected'] = selected
+                rescue_selection.write_text(json.dumps(choice))
+                rescue_run('inference')
+                self.assertEqual(pl.read_csv(rescue_out / 'matching_results.tsv', separator='\t', infer_schema=False).height, 240)
+                if selected == 'r12':
+                    self.assertEqual((rescue_out / 'matching_results.tsv').read_bytes(), (out / 'matching_results.tsv').read_bytes())
+                if validator.exists():
+                    check = subprocess.run([sys.executable, str(validator), '--matching', str(rescue_out / 'matching_results.tsv'),
+                        '--candidate', str(rescue_out / 'candidate_pairs.tsv'), '--test-dir', str(dataset / 'test'), '--check-ids'],
+                        capture_output=True, text=True, timeout=30)
+                    self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
             for path, original in originals.items():
                 self.assertEqual(path.read_bytes(), original, str(path))
 
