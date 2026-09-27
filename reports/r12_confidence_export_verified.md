@@ -72,3 +72,20 @@ evidence for blending. R14 predictions remain the missing input here.
 
 Full numeric results, file hashes and scope are in
 [`r12_confidence_export_verified.json`](r12_confidence_export_verified.json).
+
+## Reproduce the audit locally
+
+The read-only [audit script](../scripts/audit_existing_r12_export.py) uses the
+already-extracted archive and shared organizer data. It runs no exporter,
+optimizer or threshold search. Use the existing R12 Python environment, with
+Polars 1.44.2, and an existing directory for the report. From an `r16` checkout:
+
+```bash
+POLARS_MAX_THREADS=4 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
+  /path/to/.venv-r12/bin/python scripts/audit_existing_r12_export.py \
+  --export-dir /path/to/extracted/r12_export \
+  --dataset /path/to/student_resource/dataset \
+  --report /path/to/existing/audit-directory/r12-verification.json
+```
+
+Rerunning is optional: the full-data audit reported above already passed.
