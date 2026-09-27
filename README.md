@@ -1,5 +1,10 @@
 # Star Coders - Amazon ML Challenge
 
+> **R16-fast:** [deadline-sized GCP follow-up](docs/README_r16_fast.md) on
+> `codex/r16-fast`. Reuses completed R12 evidence, adds a learned business
+> presence decision, and keeps the original gate against actual R12 results.
+> Run from a separate clone after R15 finishes. No full-scale score measured.
+
 > **R15:** follow [the GCP follow-up guide](docs/README_r15.md). Reuses the
 > completed R12 models and scores, adds CE-selected cross-source evidence,
 > and gates the new final classifier against the actual R12 submission model.

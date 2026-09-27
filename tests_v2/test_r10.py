@@ -290,6 +290,36 @@ class R10PipelineTest(unittest.TestCase):
                         '--candidate', str(new_out / 'candidate_pairs.tsv'), '--test-dir', str(dataset / 'test'), '--check-ids'],
                         capture_output=True, text=True, timeout=30)
                     self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            # Fast R16 uses the SAME R12 evidence, not the full neural runner.
+            fast_work, fast_out = root / 'r16-fast', root / 'r16-fast-output'
+            fast_common = ['--base-work', work, '--work', fast_work, '--output', fast_out,
+                           '--dataset', dataset, '--device', 'cpu', '--threads', 2, '--rounds', 8]
+            def fast_run(stage, *extra):
+                result = subprocess.run([sys.executable, '-m', 'er_v2.r16_fast', stage, *map(str, fast_common), *extra],
+                    env=env, capture_output=True, text=True, timeout=180)
+                self.assertEqual(result.returncode, 0, stage + '\n' + result.stdout[-1000:] + result.stderr[-4000:])
+            for split in ('train', 'test'):
+                fast_run('prepare', '--split', split)
+            for stage in ('fit', 'select', 'evaluate', 'inference'):
+                fast_run(stage)
+            fast_selection = fast_work / 'selection.json'
+            frozen = fast_selection.read_bytes()
+            choice = json.loads(frozen)
+            self.assertEqual(choice['gate']['minimum_gain'], .0005)
+            fast_run('evaluate')
+            self.assertEqual(fast_selection.read_bytes(), frozen)
+            for selected in ('r12', 'r16_fast'):
+                choice['selected'] = selected
+                fast_selection.write_text(json.dumps(choice))
+                fast_run('inference')
+                self.assertEqual(pl.read_csv(fast_out / 'matching_results.tsv', separator='\t', infer_schema=False).height, 240)
+                if selected == 'r12':
+                    self.assertEqual((fast_out / 'matching_results.tsv').read_bytes(), (out / 'matching_results.tsv').read_bytes())
+                if validator.exists():
+                    check = subprocess.run([sys.executable, str(validator), '--matching', str(fast_out / 'matching_results.tsv'),
+                        '--candidate', str(fast_out / 'candidate_pairs.tsv'), '--test-dir', str(dataset / 'test'), '--check-ids'],
+                        capture_output=True, text=True, timeout=30)
+                    self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
             for path, original in originals.items():
                 self.assertEqual(path.read_bytes(), original, str(path))
 
