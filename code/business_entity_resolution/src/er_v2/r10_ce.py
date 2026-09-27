@@ -119,12 +119,33 @@ def cache_tokens(args):
 
 
 class PairTokens:
-    def __init__(self, work, split):
+    def __init__(self, work, split, ram_gb=0):
+        if not math.isfinite(ram_gb) or ram_gb < 0:
+            raise ValueError('Token RAM budget must be finite and nonnegative')
         from transformers import AutoTokenizer
         root = work / 'ce_tokens'
         self.tokenizer = AutoTokenizer.from_pretrained(root / 'tokenizer')
         self.arrays = {s: np.load(root / f'{split}_{s}.npy', mmap_mode='r') for s in ('s1', 'tg')}
         self.lengths = {s: np.load(root / f'{split}_{s}_lengths.npy', mmap_mode='r') for s in ('s1', 'tg')}
+        self.cache_bytes = sum(a.nbytes for a in (*self.arrays.values(), *self.lengths.values()))
+        self.cache_mode = 'mmap'
+        # A 128 GB host can retain one split's tokens without random PD reads
+        # during shuffled training. Keep the durable files for checked resume.
+        # Decide before allocating; never partially pin an oversized cache.
+        if ram_gb > 0 and self.cache_bytes <= ram_gb * 1024**3:
+            try:
+                arrays = {s: np.array(a, copy=True) for s, a in self.arrays.items()}
+                lengths = {s: np.array(a, copy=True) for s, a in self.lengths.items()}
+            except MemoryError:
+                arrays = lengths = None
+                print('CE token RAM allocation failed; retaining memory maps', flush=True)
+            else:
+                self.arrays, self.lengths = arrays, lengths
+                for a in (*self.arrays.values(), *self.lengths.values()):
+                    a.setflags(write=False)
+                self.cache_mode = 'ram'
+        print(f'CE tokens [{split}]: {self.cache_mode}, {self.cache_bytes / 1024**3:.3f} GiB '
+              f'(RAM budget {ram_gb:g} GiB)', flush=True)
 
     def batch(self, frame, device, swap=False, drop_address=False):
         tok = self.tokenizer
@@ -226,7 +247,7 @@ def fit_model(args, train, valid):
     precision = getattr(args, 'precision', 'fp16')
     dtype = amp_dtype(args.device, precision)
     rng = np.random.default_rng(args.seed)
-    cache = PairTokens(args.work, 'train')
+    cache = PairTokens(args.work, 'train', getattr(args, 'token_cache_gb', 0))
     model = AutoModelForSequenceClassification.from_pretrained(args.base_model, num_labels=1,
         revision=BASE_REVISION if args.base_model == BASE_MODEL else None).to(args.device)
     model.config.problem_type = 'regression'  # custom binary-logit loss below, not model MSE
@@ -295,6 +316,8 @@ def fit_model(args, train, valid):
         'early_stopping_folds': VALID_FOLDS, 'train_pairs': len(train), 'valid_pairs': len(valid),
         'max_length': args.max_length, 'batch': args.batch, 'accumulation': args.accumulation,
         'amp_dtype': str(dtype), 'fused_optimizer': fused,
+        'token_cache': {'mode': cache.cache_mode, 'bytes': cache.cache_bytes,
+                        'ram_budget_gib': getattr(args, 'token_cache_gb', 0)},
         'positive_sampling': 'all positives for selected businesses',
         'negative_sampling': ('stage2 top-2 + lexical + ANN + random, refill, at most 5/business'
                               if getattr(args, 'mine_stage2', False) else 'lexical + ANN + random'),
@@ -316,7 +339,7 @@ def score(args):
     import torch
     from transformers import AutoModelForSequenceClassification
     torch.set_num_threads(args.threads)
-    cache = PairTokens(args.work, args.split)
+    cache = PairTokens(args.work, args.split, getattr(args, 'token_cache_gb', 0))
     model = AutoModelForSequenceClassification.from_pretrained(args.work / 'ce_model').to(args.device).eval()
     path = args.work / f'ce_{args.split}.parquet'
     temp = path.with_suffix('.partial.parquet')
@@ -354,6 +377,8 @@ def main():
     p.add_argument('--max-length', type=int, default=128)
     p.add_argument('--batch', type=int, default=16)
     p.add_argument('--score-batch', type=int, default=128)
+    p.add_argument('--token-cache-gb', type=float, default=0,
+                   help='RAM budget in GiB for one split of CE tokens; 0 keeps memory maps')
     p.add_argument('--accumulation', type=int, default=4)
     p.add_argument('--no-checkpointing', dest='checkpointing', action='store_false',
                    help='disable activation checkpointing (faster; needs more VRAM)')
@@ -369,8 +394,8 @@ def main():
     p.add_argument('--mine-stage2', action='store_true', help='R13: mine out-of-sample stage-2 false positives')
     args = p.parse_args()
     if min(args.max_length, args.batch, args.score_batch, args.accumulation, args.epochs,
-           args.patience, args.train_businesses, args.valid_businesses, args.threads) < 1 or args.lr <= 0:
-        p.error('Counts and learning rate must be positive')
+           args.patience, args.train_businesses, args.valid_businesses, args.threads) < 1 or args.lr <= 0 or not math.isfinite(args.token_cache_gb) or args.token_cache_gb < 0:
+        p.error('Counts and learning rate must be positive; token RAM budget must be finite and nonnegative')
     {'tokens': cache_tokens, 'train': train, 'score': score}[args.stage](args)
 
 if __name__ == '__main__':

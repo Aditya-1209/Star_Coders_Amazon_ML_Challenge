@@ -43,7 +43,8 @@ labels, so neither this gate nor local metrics certify its performance.
 ## L4 VM: one command
 
 Recommended: **Google Compute Engine `g2-standard-32`, one L4 24 GB, 32 vCPUs,
-128 GB RAM, Ubuntu 24.04 x86-64, 300 GB SSD Persistent Disk, on-demand**.
+128 GB RAM, Ubuntu 24.04 x86-64, 200 GB balanced Persistent Disk, on-demand,
+Mumbai `asia-south1-c`**, matching the existing VM.
 See [the Google Cloud setup and cost guide](GCP_r13.md) for exact VM settings,
 driver installation and the creation command.
 
@@ -71,7 +72,7 @@ cat work/r13/run.json
 bash scripts/vm_r13.sh /absolute/path/to/student_resource --resume
 ```
 
-`R13_MAX_HOURS`, `R13_THREADS`, `R13_ENCODER_PAIRS` and
+`R13_MAX_HOURS`, `R13_THREADS`, `R13_CE_TOKEN_CACHE_GB`, `R13_ENCODER_PAIRS` and
 `R13_CE_TRAIN_BUSINESSES` override the launch settings. Changing settings or
 code requires a fresh work directory; changing only the deadline is allowed on
 resume. Stopped VM disks and other provisioned resources may still incur costs.
@@ -106,6 +107,7 @@ shell launcher schedules machine shutdown.
 | CE gradient checkpointing | off | on |
 | CE mixed precision / optimizer | native BF16 / fused CUDA AdamW | FP16 / AdamW |
 | CE inference batch ceiling | 1,024 | 128 |
+| CE token RAM budget | 12 GiB; memory-map fallback | 0; memory maps |
 | CE sampled training businesses | 250,000 | 180,000 |
 | Job deadline | 11 hours | 24 hours |
 | Free-disk reserve | 20 GiB | 12 GiB |
@@ -124,6 +126,13 @@ and stored logits. It requires native GPU support and disables unnecessary
 FP16 gradient scaling. CPU tests retain FP32; retrieval precision is unchanged.
 The requested precision and fused optimizer are recorded in the run settings
 and `ce_model/training.json`.
+
+On the 128 GB VM, an active split's tokens and lengths are copied into RAM if
+their combined size fits the 12 GiB budget. This avoids random balanced-disk
+reads during CE training/scoring without changing token values. Oversized
+caches or allocation failures retain memory maps. Disk caches remain for resume;
+new dependency installations avoid retaining duplicate pip downloads. A free-disk
+check now rejects low-space runs at preflight, in addition to checks within stages.
 
 Sibling feature construction reuses disk-backed embeddings; it does not train
 another encoder or allocate a dense target-by-target matrix. The anchor index

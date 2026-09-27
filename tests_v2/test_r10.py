@@ -233,10 +233,13 @@ class R10PipelineTest(unittest.TestCase):
             self.assertTrue(set(sample.select(fold_expr())['fold']) <= set(TRAIN_FOLDS))
             run('r10_ce', 'train', '--dataset', dataset, '--base-model', base, '--device', 'cpu', '--threads', 2,
                 '--max-length', 32, '--batch', 8, '--score-batch', 16, '--epochs', 1, '--train-businesses', 25, '--valid-businesses', 10,
-                *(['--mine-stage2'] if self.r13 else []))
+                *(['--mine-stage2', '--token-cache-gb', '.01'] if self.r13 else []))
             self.assertEqual(json.loads((work / 'ce_model/training.json').read_text())['train_folds'], TRAIN_FOLDS)
+            self.assertEqual(json.loads((work / 'ce_model/training.json').read_text())['token_cache']['mode'],
+                             'ram' if self.r13 else 'mmap')
             for split in ('train', 'test'):
-                run('r10_ce', 'score', '--split', split, '--device', 'cpu', '--score-batch', 32, '--threads', 2)
+                run('r10_ce', 'score', '--split', split, '--device', 'cpu', '--score-batch', 32, '--threads', 2,
+                    *(['--token-cache-gb', '.01'] if self.r13 else []))
             final = ['--dataset', dataset, '--output', out, '--device', 'cpu', '--threads', 2, '--rounds', 8]
             if self.r13:
                 final += ['--r13-features', '--target-leaderboard', '.985']

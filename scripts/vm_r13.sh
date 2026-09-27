@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# r13 on the Google Cloud VM (g2-standard-32: 32 vCPU, 128 GB RAM, NVIDIA L4 24 GB, Ubuntu 24.04).
+# r13 on Mumbai asia-south1-c: g2-standard-32, L4 24 GB, 128 GB RAM,
+# 200 GB balanced Persistent Disk, Ubuntu 24.04 / Python 3.12.
 #
 # One command, from the repository root on branch r13:
 #   bash scripts/vm_r13.sh /path/to/student_resource          # first run
@@ -44,10 +45,12 @@ fi
 # the marker is absent and the next invocation repairs the same environment.
 DEPS=$(sha256sum code/business_entity_resolution/requirements_{v2,r10}.txt)
 if [ "$(cat .venv-r13/.ready 2>/dev/null || true)" != "$DEPS" ]; then
-  .venv-r13/bin/python -m pip install -q --upgrade pip
+  # Avoid retaining a second copy of multi-GB CUDA wheels on the 200 GB disk.
+  # Existing caches from other experiments are left intact.
+  .venv-r13/bin/python -m pip install --no-cache-dir -q --upgrade pip
   # CUDA 12.6 wheel (works with the L4's driver); pinned to the tested version
-  .venv-r13/bin/python -m pip install -q torch==2.14.0 --index-url https://download.pytorch.org/whl/cu126
-  .venv-r13/bin/python -m pip install -q -r code/business_entity_resolution/requirements_r10.txt
+  .venv-r13/bin/python -m pip install --no-cache-dir -q torch==2.14.0 --index-url https://download.pytorch.org/whl/cu126
+  .venv-r13/bin/python -m pip install --no-cache-dir -q -r code/business_entity_resolution/requirements_r10.txt
   .venv-r13/bin/python -m pip check
   printf '%s\n' "$DEPS" > .venv-r13/.ready
 fi
@@ -59,6 +62,7 @@ export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 HOURS=${R13_MAX_HOURS:-11}
 ARGS=(--profile vm --work work/r13 --output output/r13 --dataset "$SR/dataset" --validator "$SR/utils/validate_submission.py"
       --threads "${R13_THREADS:-30}" --max-hours "$HOURS"
+      --ce-token-cache-gb "${R13_CE_TOKEN_CACHE_GB:-12}"
       --encoder-pairs "${R13_ENCODER_PAIRS:-1000000}" --ce-train-businesses "${R13_CE_TRAIN_BUSINESSES:-250000}")
 .venv-r13/bin/python scripts/run_r13.py "${ARGS[@]}" --preflight
 .venv-r13/bin/python -m unittest discover -s tests_v2

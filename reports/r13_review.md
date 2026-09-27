@@ -111,3 +111,38 @@ passed again after tightening the BF16 check to exclude emulated support.
 Both shell scripts pass `bash -n`; the VM command plan includes the new settings.
 No cloud VM was provisioned and no GPU speedup or leaderboard gain was measured.
 See [Google Cloud setup and current price references](../docs/GCP_r13.md).
+
+## Existing Mumbai VM follow-up
+
+The supplied VM is `g2-standard-32` in `asia-south1-c`, with one L4 24 GB,
+32 vCPUs, 128 GB RAM, a 200 GB balanced Persistent Disk, Ubuntu 24.04 and
+Python 3.12.3. The setup guide now matches that existing machine instead of
+the earlier Iowa / 300 GB SSD recommendation. Its cost section distinguishes
+the user's earlier $1.81/hour estimate with a 10 GB disk from the unknown
+current total including the expanded disk and NAT.
+
+The VM profile now permits 12 GiB of host RAM for one active split's CE tokens
+and lengths. When they fit, read-only arrays replace random memory-map reads
+during training and scoring. Over-budget caches and Python allocation failures
+retain all four original memory maps. Files remain on disk for checked resume;
+token values, order, sampling, model precision and the validation gate are
+unchanged. Desktop/R10 defaults keep memory maps. The budget is fingerprinted
+in runner settings; the effective mode and bytes are logged and recorded in
+CE training metadata.
+
+Dependency installation no longer retains another copy of downloaded pip
+wheels. Preflight rejects free space below the configured reserve, supplementing
+existing checks before and during stages. No previous experiment data or model
+cache is deleted. Full-run storage needs still require observation on the VM.
+
+Validation on 2026-09-27: **70 tests in 65.311 seconds, 66 passed, 4 Linux
+launcher tests skipped** on the same Mac environment. The RAM path is used in
+the R13 tiny-BERT training/scoring and official-format smoke test. Separate
+checks verify token-batch and length equality including swapped pairs/address
+dropout, exact budget boundaries, no allocation for oversized caches, complete
+fallback after a partial allocation failure, invalid budgets and low-disk
+preflight. Shell syntax and the generated VM plan pass. The Linux-only tests
+still require `flock` and `sha256sum`; no real VM shutdown was executed.
+
+This is a storage-access optimization for the specified VM, not evidence of a
+measured GPU speedup or a new website score. The 98.5% objective remains unmeasured.

@@ -7,12 +7,14 @@ import sys
 from tempfile import TemporaryDirectory
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import polars as pl
 import torch
 from er_v2.prepare import normalize_frame, _norm_chunk
-from er_v2.r10_ce import amp_dtype, score_logits
+from er_v2.r10_ce import PairTokens, amp_dtype, score_logits
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -32,9 +34,70 @@ class CloudTests(unittest.TestCase):
         for stage in ('ce_train', 'ce_score_train', 'ce_score_test'):
             command = commands[stage][0]
             self.assertEqual(command[command.index('--precision') + 1], 'bf16')
+            self.assertEqual(float(command[command.index('--token-cache-gb') + 1]), 12)
         self.assertIn('--fused-optimizer', commands['ce_train'][0])
         old = run_r10.parser().parse_args([])
         self.assertEqual((old.prepare_buffer_rows, old.ce_precision, old.ce_fused_optimizer), (100000, 'fp16', False))
+        self.assertEqual(old.ce_token_cache_gb, 0)
+        self.assertEqual(run_r13.parser(['--profile', 'desktop']).parse_args(['--profile', 'desktop']).ce_token_cache_gb, 0)
+
+    def test_ram_tokens_preserve_batches_and_fall_back_without_partial_copies(self):
+        from transformers import BertTokenizer
+        with TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            root = work / 'ce_tokens'
+            root.mkdir()
+            vocab = root / 'vocab.txt'
+            vocab.write_text('\n'.join(['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]', 'acme', 'main']))
+            BertTokenizer(vocab_file=str(vocab)).save_pretrained(root / 'tokenizer')
+            for side in ('s1', 'tg'):
+                np.save(root / f'train_{side}.npy', np.array([[5, 3, 6, 0], [6, 3, 0, 0]], np.uint32))
+                np.save(root / f'train_{side}_lengths.npy', np.array([3, 2], np.uint16))
+            pairs = pl.DataFrame({'sidx': [1, 0, 1], 'tidx': [0, 1, 1]})
+            disk = PairTokens(work, 'train')
+            budget = disk.cache_bytes / 1024**3
+            ram = PairTokens(work, 'train', budget)
+            self.assertEqual(ram.cache_mode, 'ram')
+            self.assertTrue(all(not isinstance(a, np.memmap) and not a.flags.writeable
+                                for a in (*ram.arrays.values(), *ram.lengths.values())))
+            for swap in (False, True):
+                for drops in (False, [True, False, True]):
+                    expected = disk.batch(pairs, 'cpu', swap=swap, drop_address=drops)
+                    actual = ram.batch(pairs, 'cpu', swap=swap, drop_address=drops)
+                    for key in expected:
+                        self.assertTrue(torch.equal(actual[key], expected[key]))
+            np.testing.assert_array_equal(ram.pair_lengths(pairs), disk.pair_lengths(pairs))
+            # Oversized cache does not even attempt a RAM copy.
+            with patch('er_v2.r10_ce.np.array', side_effect=AssertionError('unexpected copy')):
+                oversized = PairTokens(work, 'train', budget / 2)
+            self.assertEqual(oversized.cache_mode, 'mmap')
+            real_array, copies = np.array, []
+            def fail_second(*args, **kwargs):
+                copies.append(1)
+                if len(copies) == 2:
+                    raise MemoryError('test allocation failure')
+                return real_array(*args, **kwargs)
+            with patch('er_v2.r10_ce.np.array', side_effect=fail_second):
+                failed = PairTokens(work, 'train', budget)
+            self.assertEqual(failed.cache_mode, 'mmap')
+            self.assertTrue(all(isinstance(a, np.memmap)
+                                for a in (*failed.arrays.values(), *failed.lengths.values())))
+            self.assertTrue(torch.equal(failed.batch(pairs, 'cpu')['input_ids'], disk.batch(pairs, 'cpu')['input_ids']))
+            for invalid in (-1, float('nan'), float('inf')):
+                with self.assertRaises(ValueError):
+                    PairTokens(work, 'train', invalid)
+            # Release file handles before the temporary directory closes on Windows.
+            del disk, ram, oversized, failed
+
+    def test_low_disk_preflight_and_invalid_ram_budget_fail_before_training(self):
+        args = run_r13.parser().parse_args([])
+        with patch.object(run_r10.shutil, 'disk_usage', return_value=SimpleNamespace(free=19 * 1024**3)):
+            with self.assertRaisesRegex(RuntimeError, 'below 20 GiB reserve'):
+                run_r10.preflight(args)
+        for value in ('-1', 'nan', 'inf'):
+            with self.subTest(value=value), patch.object(run_r10, 'preflight', side_effect=AssertionError('unexpected preflight')):
+                with self.assertRaises(SystemExit):
+                    run_r10.main(['--ce-token-cache-gb', value, '--plan'])
 
     def test_normalization_window_changes_parallelism_without_changing_records(self):
         class Pool:

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -72,6 +73,8 @@ def parser():
     p.add_argument('--rounds', type=int, default=1500)
     p.add_argument('--ce-batch', type=int, default=16)
     p.add_argument('--ce-score-batch', type=int, default=128)
+    p.add_argument('--ce-token-cache-gb', type=float, default=0,
+                   help='RAM budget in GiB for CE token arrays; 0 keeps memory maps')
     p.add_argument('--ce-epochs', type=int, default=3)
     p.add_argument('--ce-precision', choices=['fp16', 'bf16', 'auto'], default='fp16')
     p.add_argument('--ce-fused-optimizer', action=argparse.BooleanOptionalAction, default=False)
@@ -160,6 +163,7 @@ def commands(args):
             w / 'ce_tokens' / f'{split}.json')
     ceopts = ['--device', args.device, '--threads', str(min(args.threads, 8)), '--batch', str(args.ce_batch),
               '--score-batch', str(args.ce_score_batch), '--epochs', str(args.ce_epochs),
+              '--token-cache-gb', str(args.ce_token_cache_gb),
               '--accumulation', str(args.ce_accumulation), '--train-businesses', str(args.ce_train_businesses),
               '--precision', args.ce_precision, *(['--fused-optimizer'] if args.ce_fused_optimizer else []),
               *([] if args.ce_checkpointing else ['--no-checkpointing'])]
@@ -182,6 +186,10 @@ def commands(args):
 
 
 def preflight(args):
+    free_gb = shutil.disk_usage(args.work).free / 1024**3
+    if free_gb < args.reserve_gb:
+        raise RuntimeError(f'Free disk {free_gb:.1f} GiB below {args.reserve_gb:g} GiB reserve; '
+                           'add space before starting or resuming')
     import torch
     import faiss
     import transformers
@@ -216,7 +224,7 @@ def preflight(args):
         raise FileNotFoundError('Training ground truth missing')
     if not args.validator.is_file():
         raise FileNotFoundError(f'Official validator missing: {args.validator}')
-    print(json.dumps({'versions': versions, 'free_gb': shutil.disk_usage(args.work).free / 1024**3}, indent=2))
+    print(json.dumps({'versions': versions, 'free_gb': free_gb}, indent=2))
     return versions
 
 
@@ -248,7 +256,7 @@ def main(argv=None, argument_parser=None):
     args = p.parse_args(argv)
     if min(args.threads, args.prepare_buffer_rows, args.rounds, args.ce_batch, args.ce_score_batch, args.ce_epochs, args.encode_batch,
            args.nprobe, args.neural_k, args.search_k, args.ce_accumulation, args.encoder_pairs,
-           args.ce_train_businesses, args.shard_pairs) < 1 or args.neural_k >= 65535 or not 0 <= args.rescue_k <= args.neural_k or not 0 < args.max_hours <= 72 or args.reserve_gb < 1 or not 0 < args.target_local <= 1 or (args.target_leaderboard is not None and not 0 < args.target_leaderboard <= 1):
+           args.ce_train_businesses, args.shard_pairs) < 1 or args.neural_k >= 65535 or not 0 <= args.rescue_k <= args.neural_k or not 0 < args.max_hours <= 72 or args.reserve_gb < 1 or not math.isfinite(args.ce_token_cache_gb) or args.ce_token_cache_gb < 0 or not 0 < args.target_local <= 1 or (args.target_leaderboard is not None and not 0 < args.target_leaderboard <= 1):
         p.error('Invalid counts, rescue size, storage reserve or deadline')
     for name in ('work', 'dataset', 'output', 'encoder', 'validator'):
         if getattr(args, name) is not None:

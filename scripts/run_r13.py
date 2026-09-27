@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R13 accuracy run, with explicit L4 VM and RTX 3060 desktop profiles."""
+"""R13: Mumbai L4 / 128 GB RAM / 200 GB balanced PD, or RTX 3060 desktop."""
 import argparse
 from pathlib import Path
 import sys
@@ -9,7 +9,8 @@ PROFILES = {
     'vm': dict(threads=30, ce_batch=64, ce_accumulation=1, ce_checkpointing=False,
                ce_score_batch=1024, encode_batch=1024, shard_pairs=6000000,
                ce_train_businesses=250000, max_hours=11, reserve_gb=20,
-               prepare_buffer_rows=750000, ce_precision='bf16', ce_fused_optimizer=True),
+               prepare_buffer_rows=750000, ce_precision='bf16', ce_fused_optimizer=True,
+               ce_token_cache_gb=12),
     'desktop': dict(threads=12, ce_batch=16, ce_accumulation=4, ce_checkpointing=True,
                     ce_score_batch=128, encode_batch=256, shard_pairs=2000000,
                     ce_train_businesses=180000, max_hours=24, reserve_gb=12),
