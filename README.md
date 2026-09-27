@@ -1,6 +1,7 @@
 # Star Coders - Amazon ML Challenge
 
 > **R16:** follow [the Mumbai L4 run guide](docs/README_r16.md).
+> For completed R12/R16-fast runs, use the [verified evidence export guide](docs/README_r12_evidence_export.md) before an R14 comparison.
 > Reuses one neural encoder/CE and adds a business no-match classifier, sibling
 > evidence, and validation against a rebuilt R12-style CE ensemble.
 > Targets the existing `g2-standard-32` / L4 / 128 GB / 200 GB balanced-disk VM.

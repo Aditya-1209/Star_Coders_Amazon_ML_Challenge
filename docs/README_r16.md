@@ -71,7 +71,7 @@ include setup. The new launcher has a **16-hour job limit** and arms a
 by these repository scripts.
 
 ```bash
-git clone --branch codex/r16-l4 --single-branch https://github.com/Aditya-1209/Star_Coders_Amazon_ML_Challenge.git Star_Coders_r16
+git clone --branch r16 --single-branch https://github.com/Aditya-1209/Star_Coders_Amazon_ML_Challenge.git Star_Coders_r16
 cd Star_Coders_r16
 nvidia-smi
 bash scripts/vm_r16.sh /absolute/path/to/student_resource
@@ -153,3 +153,10 @@ pairs later rejected by the business classifier. Every test Source 1 record,
 including France and empty-match businesses, remains in both files.
 
 See [the implementation and validation record](../reports/r16_review.md).
+## Completed R12 / R16-fast handoff
+
+To compare existing runs without retraining, see
+[the frozen R12 evidence exporter](README_r12_evidence_export.md). It exports
+final confidence scores with entity/source IDs and verifies saved results.
+R16-fast's supplied results retained R12; the full R16 recipe below has no
+measured public result from this workspace.
