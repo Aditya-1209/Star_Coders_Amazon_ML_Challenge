@@ -9,7 +9,9 @@ for option in "$@"; do
 done
 SR=$(realpath "$SR")
 BASE=$(realpath "${R15_RESCUE_BASE_WORK:?set R15_RESCUE_BASE_WORK to original work/r12}")
-PY=$(realpath "${R15_RESCUE_PYTHON:?set R15_RESCUE_PYTHON to existing .venv-r12/bin/python}")
+PY=${R15_RESCUE_PYTHON:?set R15_RESCUE_PYTHON to existing .venv-r12/bin/python}
+# Preserve the final Python symlink so the existing venv is selected.
+PY="$(cd -- "$(dirname -- "$PY")" && pwd -P)/$(basename -- "$PY")"
 [ -x "$PY" ] || { echo 'Existing R12 Python environment required'; exit 2; }
 R15_STATE="${R15_RESCUE_R15_WORK:-$(dirname "$BASE")/r15}/run.json"
 R16_STATE="${R15_RESCUE_R16_WORK:-$HOME/Star_Coders_r16_fast/work/r16_fast}/run.json"

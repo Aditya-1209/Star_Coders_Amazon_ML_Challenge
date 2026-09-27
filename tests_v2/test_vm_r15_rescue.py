@@ -26,6 +26,7 @@ class FastLauncherTests(unittest.TestCase):
         python = root / 'old/.venv-r12/bin/python'
         python.write_text('''#!/usr/bin/env bash
 printf 'python %s\n' "$*" >> "$TEST_CALLS"
+printf 'executable %s\n' "$0" >> "$TEST_CALLS"
 case "$*" in
  *'R15/R16 is still running'*) exit "${FAIL_ACTIVE:-0}" ;;
  *'--preflight'*) exit "${FAIL_PREFLIGHT:-0}" ;;
@@ -36,6 +37,9 @@ sleep 2
 echo complete
 ''')
         python.chmod(0o755)
+        body = fake / 'python-body'
+        python.rename(body)
+        python.symlink_to(body)
         return {**os.environ, 'PATH': str(fake) + os.pathsep + os.environ['PATH'],
                 'TEST_CALLS': str(root / 'calls'), 'TEST_STARTED': str(root / 'started'),
                 'R15_RESCUE_BASE_WORK': str(root / 'old/work/r12'), 'R15_RESCUE_PYTHON': str(python)}
@@ -69,6 +73,8 @@ echo complete
             self.assertIn('already active', duplicate.stdout)
             calls = (root / 'calls').read_text()
             self.assertIn('--base-work ' + str(root / 'old/work/r12'), calls)
+            self.assertIn('executable ' + str(root / 'old/.venv-r12/bin/python'), calls)
+            self.assertNotIn('executable ' + str(root / 'fakebin/python-body'), calls)
             self.assertIn('--dataset ' + str(root / 'resource with spaces/dataset'), calls)
             self.assertIn('unittest discover -s tests_v2', calls)
             self.assertIn('sudo shutdown --show', calls)

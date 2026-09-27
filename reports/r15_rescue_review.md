@@ -43,3 +43,11 @@ the saved selection unchanged, and parent artifacts were unchanged.
 Both fast plans (Windows/Ubuntu), the original `run_r10.py --plan`, shell
 syntax and `git diff --check` passed. No full-data GPU or public score is
 claimed; test artifacts are synthetic and do not measure challenge accuracy.
+
+Launcher correction inherited from the first R16-fast attempt: preserve the
+final venv interpreter symlink instead of using `realpath` to escape to the
+system Python. Linux launcher regressions now use symlinked interpreter
+fixtures and check the invoked venv path. No model or dependency changes.
+Post-fix verification: full suite passed 72 tests in 248.726 seconds (six
+Linux skips); both Ubuntu launcher tests passed in 2.254 seconds; shell syntax,
+the original runner plan and diff checks passed.
