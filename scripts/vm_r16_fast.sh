@@ -9,7 +9,10 @@ for option in "$@"; do
 done
 SR=$(realpath "$SR")
 BASE=$(realpath "${R16_BASE_WORK:?set R16_BASE_WORK to the original work/r12 directory}")
-PY=$(realpath "${R16_PYTHON:?set R16_PYTHON to the existing .venv-r12/bin/python}")
+PY=${R16_PYTHON:?set R16_PYTHON to the existing .venv-r12/bin/python}
+# Canonicalize the directory only: resolving the final Python symlink escapes
+# a venv and invokes the system interpreter without its installed packages.
+PY="$(cd -- "$(dirname -- "$PY")" && pwd -P)/$(basename -- "$PY")"
 [ -x "$PY" ] || { echo 'Existing R12 Python environment is required'; exit 2; }
 # Never contend with the known R15 job on the same single GPU, or change its
 # shutdown timer. The original checkout and saved neural artifacts stay intact.

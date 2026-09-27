@@ -53,3 +53,12 @@ R16-fast L4 run has been benchmarked. See `docs/README_r16_fast.md` for launch.
 While preparing this branch, the user confirmed R15 completed in about ten
 minutes and its gate selected R12. R16-fast's business-presence classifier is
 therefore the distinct additional hypothesis; success is not assumed.
+
+Launcher correction: the first VM attempt failed at `-m pip` because resolving
+the venv interpreter's final symlink selected `/usr/bin/python3.12`. Preserve
+the executable symlink and canonicalize only its directory. Linux regression
+fixtures now use an external interpreter symlink and assert the venv entry
+point is invoked. No dependencies or models need reinstalling for this fix.
+Post-fix verification: full suite passed 72 tests in 248.215 seconds (six
+Linux skips); both Ubuntu launcher tests passed in 2.264 seconds; shell syntax,
+the original runner plan and diff checks passed.
