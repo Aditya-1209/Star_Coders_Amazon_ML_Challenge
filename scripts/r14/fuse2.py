@@ -215,6 +215,8 @@ def main():
     fused3 = apply(scores.filter(pl.col("fold") == 3), u3, u3["fused"].to_numpy())
     fused4 = apply(scores.filter(pl.col("fold") == 4), u4, predict([model_a, model_b], u4, features))
     base3, base4 = (scores.filter(pl.col("fold") == f).select("sidx", "tidx", "score") for f in (3, 4))
+    fused3.write_parquet(args.output / "r14_fold3.parquet")
+    fused4.write_parquet(args.output / "r14_fold4.parquet")
 
     results = {}
     for name, s3, s4 in (("graph_baseline", base3, base4), ("r14_fusion", fused3, fused4)):
