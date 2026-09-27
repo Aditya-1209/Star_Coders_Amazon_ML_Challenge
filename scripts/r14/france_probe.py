@@ -20,13 +20,17 @@ from er_v2.predict import write_lists
 ap = argparse.ArgumentParser()
 ap.add_argument("--work", type=Path, required=True)
 ap.add_argument("--scores", type=Path, required=True)
-ap.add_argument("--metrics", type=Path, required=True)
+ap.add_argument("--metrics", type=Path, help="r14_metrics.json (fuse) or ens_metrics.json (ens_r12)")
+ap.add_argument("--threshold", type=float, help="global cutoff; overrides --metrics")
 ap.add_argument("--france-threshold", type=float, required=True)
 ap.add_argument("--output", type=Path, required=True)
 args = ap.parse_args()
 
-metrics = json.loads(args.metrics.read_text())
-chosen = metrics["results"][metrics["selected"]]
+if args.threshold is not None:
+    chosen = {"threshold": args.threshold, "country_thresholds": {}}
+else:
+    metrics = json.loads(args.metrics.read_text())
+    chosen = metrics["results"][metrics["selected"]] if "results" in metrics else         {"threshold": metrics["selected"]["threshold"], "country_thresholds": {}}
 cutoffs = {**chosen["country_thresholds"], "France": args.france_threshold}
 scores = pl.read_parquet(args.scores)
 country = pl.read_parquet(args.work / "norm/test_source1.parquet", columns=["idx", "country"]).select(

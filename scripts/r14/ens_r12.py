@@ -83,4 +83,5 @@ targets = pl.concat([pl.read_parquet(N / f"test_source{i}.parquet", columns=["en
 write_lists(args.output / "candidate_pairs.tsv", s1, scores, targets, "candidate_entity_ids")
 write_lists(args.output / "matching_results.tsv", s1, matches.sort("sidx", "score", descending=[False, True]),
             targets, "matched_entity_ids")
+scores.write_parquet(args.output / "ens_test_scores.parquet")
 print(f"test matches {len(matches):,}", flush=True)
