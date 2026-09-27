@@ -1,0 +1,191 @@
+/home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/.venv-r12/lib/python3.12/site-packages/xgboost/core.py:569: UserWarning: [09:21:53] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+{
+  "version": "r10-ce-ann-1",
+  "selected": "r10",
+  "local_fold4": {
+    "macro_f05": 0.9903875328365093,
+    "pair_precision": 0.9986615796850081,
+    "pair_recall": 0.9739132825458835,
+    "anchors": 220507
+  },
+  "reference_fold4": {
+    "macro_f05": 0.9884209887299688,
+    "pair_precision": 0.9976627658973607,
+    "pair_recall": 0.9712491015753361,
+    "anchors": 220507
+  },
+  "candidate_oracle_fold4": {
+    "macro_f05": 0.999081939336962,
+    "pair_precision": 1.0,
+    "pair_recall": 0.9970517270045834,
+    "anchors": 220507
+  },
+  "by_country": {
+    "India": {
+      "macro_f05": 0.991566657156132,
+      "pair_precision": 0.9986295600553524,
+      "pair_recall": 0.9765859175554953,
+      "anchors": 88068
+    },
+    "US": {
+      "macro_f05": 0.9896034501978567,
+      "pair_precision": 0.9986830710692924,
+      "pair_recall": 0.9721277106855059,
+      "anchors": 132439
+    }
+  },
+  "target_local": 0.99,
+  "target_met_locally": true,
+  "amazon_score": null,
+  "user_reported_r8": {
+    "local": 0.956,
+    "online": 0.954
+  },
+  "selection": {
+    "version": "r10-ce-ann-1",
+    "selected": "r10",
+    "proposal": {
+      "model": "mean",
+      "weight": 1.0,
+      "threshold": 0.7190439701080322,
+      "country_thresholds": {},
+      "fold3A": 0.9904225628407861
+    },
+    "gate": {
+      "gain": 0.0022936890736397616,
+      "approx_one_sided_95_lower": 0.0020936152878101603,
+      "minimum_gain": 0.0005,
+      "country_ok": true,
+      "passed": true,
+      "candidate_by_country": {
+        "India": {
+          "macro_f05": 0.9916804682684992,
+          "pair_precision": 0.998782333748192,
+          "pair_recall": 0.9764477621756716,
+          "anchors": 44036
+        },
+        "US": {
+          "macro_f05": 0.9898284028992125,
+          "pair_precision": 0.9986486546954775,
+          "pair_recall": 0.9723049979088247,
+          "anchors": 66226
+        }
+      },
+      "baseline_by_country": {
+        "India": {
+          "macro_f05": 0.9890223610110688,
+          "pair_precision": 0.9974856588180574,
+          "pair_recall": 0.9732381860633366,
+          "anchors": 44036
+        },
+        "US": {
+          "macro_f05": 0.9877770283114453,
+          "pair_precision": 0.9976070444310009,
+          "pair_recall": 0.9698740066917607,
+          "anchors": 66226
+        }
+      }
+    },
+    "trials_on_3A": [
+      {
+        "model": "pair",
+        "weight": 0.25,
+        "threshold": 0.7366164922714233,
+        "country_thresholds": {},
+        "fold3A": 0.9891244353830667
+      },
+      {
+        "model": "pair",
+        "weight": 0.5,
+        "threshold": 0.6958491802215576,
+        "country_thresholds": {},
+        "fold3A": 0.9898421091463586
+      },
+      {
+        "model": "pair",
+        "weight": 0.75,
+        "threshold": 0.6965005993843079,
+        "country_thresholds": {},
+        "fold3A": 0.9902353642690965
+      },
+      {
+        "model": "pair",
+        "weight": 1.0,
+        "threshold": 0.7182004451751709,
+        "country_thresholds": {
+          "India": 0.7586539387702942
+        },
+        "fold3A": 0.9904086194279694
+      },
+      {
+        "model": "business",
+        "weight": 0.25,
+        "threshold": 0.7086659073829651,
+        "country_thresholds": {},
+        "fold3A": 0.9891606275412019
+      },
+      {
+        "model": "business",
+        "weight": 0.5,
+        "threshold": 0.6687373518943787,
+        "country_thresholds": {},
+        "fold3A": 0.9899065172733293
+      },
+      {
+        "model": "business",
+        "weight": 0.75,
+        "threshold": 0.7094799876213074,
+        "country_thresholds": {},
+        "fold3A": 0.9902535985000447
+      },
+      {
+        "model": "business",
+        "weight": 1.0,
+        "threshold": 0.7163198590278625,
+        "country_thresholds": {},
+        "fold3A": 0.9903860843079091
+      },
+      {
+        "model": "mean",
+        "weight": 0.25,
+        "threshold": 0.7367629408836365,
+        "country_thresholds": {},
+        "fold3A": 0.9891459267922174
+      },
+      {
+        "model": "mean",
+        "weight": 0.5,
+        "threshold": 0.6646631360054016,
+        "country_thresholds": {},
+        "fold3A": 0.9898827311268699
+      },
+      {
+        "model": "mean",
+        "weight": 0.75,
+        "threshold": 0.6850179433822632,
+        "country_thresholds": {},
+        "fold3A": 0.9902442937407964
+      },
+      {
+        "model": "mean",
+        "weight": 1.0,
+        "threshold": 0.7190439701080322,
+        "country_thresholds": {},
+        "fold3A": 0.9904225628407861
+      }
+    ],
+    "protocol_note": "3B is held out only for the new final layer; inherited earlier layers use fold 3. Fold 4 is report-only here but has been inspected in past experiments."
+  },
+  "limitations": [
+    "No measured France score: training has no France labels.",
+    "Rebuilt R8-style reference uses the R10 candidates, encoder and rescue rule; it is not the old submitted artifact.",
+    "The local target is a reporting objective, not a guaranteed or measured leaderboard result."
+  ]
+}

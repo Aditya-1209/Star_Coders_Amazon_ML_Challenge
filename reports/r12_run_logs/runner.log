@@ -1,0 +1,43 @@
+GPU: NVIDIA L4; 22.1 GiB
+{
+  "versions": {
+    "torch": "2.14.0+cu126",
+    "transformers": "5.17.0",
+    "sentence-transformers": "6.1.0",
+    "faiss-cpu": "1.15.1",
+    "xgboost": "3.4.1",
+    "polars": "1.44.2",
+    "numpy": "2.5.3",
+    "pyarrow": "25.0.1"
+  },
+  "free_gb": 165.10169219970703
+}
+2026-09-26T20:55:09.289428+00:00 translit -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/translit.log
+2026-09-26T20:55:29.498464+00:00 prepare -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/prepare.log
+2026-09-26T21:00:04.120754+00:00 key_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/key_train.log
+2026-09-26T21:16:38.047057+00:00 key_test -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/key_test.log
+2026-09-26T21:29:24.337274+00:00 encoder -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/encoder.log
+2026-09-26T22:04:53.587939+00:00 encode_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/encode_train.log
+2026-09-26T22:51:54.657310+00:00 ann_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/ann_train.log
+2026-09-26T23:07:18.207073+00:00 merge_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/merge_train.log
+2026-09-26T23:07:31.546623+00:00 features_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/features_train.log
+2026-09-27T00:16:36.118385+00:00 encode_test -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/encode_test.log
+2026-09-27T01:01:42.216034+00:00 ann_test -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/ann_test.log
+2026-09-27T01:10:35.047882+00:00 merge_test -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/merge_test.log
+2026-09-27T01:10:45.416852+00:00 features_test -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/features_test.log
+2026-09-27T02:05:36.031356+00:00 shift_check -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/shift_check.log
+2026-09-27T02:05:52.082896+00:00 train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/train.log
+2026-09-27T02:23:24.434890+00:00 predict -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/predict.log
+2026-09-27T02:30:17.857411+00:00 graph_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/graph_train.log
+2026-09-27T02:49:59.644245+00:00 graph_test -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/graph_test.log
+2026-09-27T03:21:18.986978+00:00 tokens_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/tokens_train.log
+2026-09-27T03:44:45.517267+00:00 tokens_test -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/tokens_test.log
+2026-09-27T04:07:26.423906+00:00 ce_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/ce_train.log
+2026-09-27T07:01:50.123127+00:00 ce_score_train -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/ce_score_train.log
+2026-09-27T07:43:12.695781+00:00 ce_score_test -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/ce_score_test.log
+2026-09-27T09:18:07.403738+00:00 fit -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/fit.log
+2026-09-27T09:20:55.776990+00:00 select -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/select.log
+2026-09-27T09:21:45.884888+00:00 evaluate -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/evaluate.log
+2026-09-27T09:22:07.945252+00:00 inference -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/inference.log
+2026-09-27T09:24:17.256646+00:00 validate -> /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/logs/validate.log
+Complete: /home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/work/r12/result.md

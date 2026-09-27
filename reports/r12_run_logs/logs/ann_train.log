@@ -1,0 +1,3 @@
+[    265s] train/India: 883,188 businesses x 4,133,346 records
+[    921s] train/US: 1,323,633 businesses x 6,186,873 records
+[    922s] train: 52,963,704 neural candidate pairs -> ncands_train.parquet

@@ -1,0 +1,103 @@
+stage1 folds (0, 8): 20,404,351 pairs (negatives x0.5)
+[0]	train-logloss:0.09764	valid-logloss:0.09804
+[100]	train-logloss:0.00819	valid-logloss:0.00838
+[200]	train-logloss:0.00730	valid-logloss:0.00766
+[300]	train-logloss:0.00681	valid-logloss:0.00732
+[400]	train-logloss:0.00647	valid-logloss:0.00712
+[500]	train-logloss:0.00622	valid-logloss:0.00701
+[600]	train-logloss:0.00601	valid-logloss:0.00693
+[700]	train-logloss:0.00583	valid-logloss:0.00686
+[800]	train-logloss:0.00567	valid-logloss:0.00681
+[900]	train-logloss:0.00551	valid-logloss:0.00677
+[1000]	train-logloss:0.00538	valid-logloss:0.00674
+[1100]	train-logloss:0.00525	valid-logloss:0.00672
+[1200]	train-logloss:0.00512	valid-logloss:0.00669
+[1300]	train-logloss:0.00502	valid-logloss:0.00668
+[1400]	train-logloss:0.00491	valid-logloss:0.00667
+[1499]	train-logloss:0.00480	valid-logloss:0.00666
+stage1 folds (1, 9): 20,476,072 pairs (negatives x0.5)
+[0]	train-logloss:0.09756	valid-logloss:0.09804
+[100]	train-logloss:0.00821	valid-logloss:0.00843
+[200]	train-logloss:0.00727	valid-logloss:0.00766
+[300]	train-logloss:0.00680	valid-logloss:0.00734
+[400]	train-logloss:0.00647	valid-logloss:0.00714
+[500]	train-logloss:0.00621	valid-logloss:0.00701
+[600]	train-logloss:0.00600	valid-logloss:0.00693
+[700]	train-logloss:0.00581	valid-logloss:0.00687
+[800]	train-logloss:0.00565	valid-logloss:0.00682
+[900]	train-logloss:0.00550	valid-logloss:0.00678
+[1000]	train-logloss:0.00537	valid-logloss:0.00675
+[1100]	train-logloss:0.00524	valid-logloss:0.00672
+[1200]	train-logloss:0.00512	valid-logloss:0.00671
+[1300]	train-logloss:0.00501	valid-logloss:0.00670
+[1400]	train-logloss:0.00490	valid-logloss:0.00669
+[1499]	train-logloss:0.00480	valid-logloss:0.00667
+stage1 ensemble trained, 545s
+/home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/.venv-r12/lib/python3.12/site-packages/xgboost/core.py:569: UserWarning: [02:14:59] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+scored part_000.parquet: 6,000,068 pairs
+scored part_001.parquet: 6,000,031 pairs
+scored part_002.parquet: 6,000,026 pairs
+scored part_003.parquet: 6,000,080 pairs
+scored part_004.parquet: 6,000,070 pairs
+scored part_005.parquet: 6,000,083 pairs
+scored part_006.parquet: 6,000,056 pairs
+scored part_007.parquet: 6,000,015 pairs
+scored part_008.parquet: 6,000,045 pairs
+scored part_009.parquet: 6,000,089 pairs
+scored part_010.parquet: 6,000,023 pairs
+scored part_011.parquet: 6,000,011 pairs
+scored part_012.parquet: 6,000,054 pairs
+scored part_013.parquet: 1,801,273 pairs
+scored part_014.parquet: 6,000,023 pairs
+scored part_015.parquet: 6,000,042 pairs
+scored part_016.parquet: 6,000,098 pairs
+scored part_017.parquet: 6,000,059 pairs
+scored part_018.parquet: 6,000,015 pairs
+scored part_019.parquet: 6,000,070 pairs
+scored part_020.parquet: 6,000,018 pairs
+scored part_021.parquet: 6,000,015 pairs
+scored part_022.parquet: 6,000,020 pairs
+scored part_023.parquet: 6,000,040 pairs
+scored part_024.parquet: 6,000,055 pairs
+scored part_025.parquet: 6,000,087 pairs
+scored part_026.parquet: 6,000,060 pairs
+scored part_027.parquet: 6,000,081 pairs
+scored part_028.parquet: 6,000,089 pairs
+scored part_029.parquet: 6,000,061 pairs
+scored part_030.parquet: 6,000,080 pairs
+scored part_031.parquet: 6,000,001 pairs
+scored part_032.parquet: 6,000,085 pairs
+scored part_033.parquet: 3,010,705 pairs
+stage1 scored + context, 901s
+[0]	train-logloss:0.54085	valid-logloss:0.54120
+[100]	train-logloss:0.02724	valid-logloss:0.02812
+[200]	train-logloss:0.02522	valid-logloss:0.02701
+[300]	train-logloss:0.02399	valid-logloss:0.02669
+[400]	train-logloss:0.02303	valid-logloss:0.02653
+[500]	train-logloss:0.02209	valid-logloss:0.02645
+[600]	train-logloss:0.02134	valid-logloss:0.02641
+[649]	train-logloss:0.02100	valid-logloss:0.02642
+stage2 trained (599 it), 984s
+fold3_retrieval_oracle       F0.5=0.9990 P=1.0000 R=0.9967
+fold4_retrieval_oracle       F0.5=0.9990 P=1.0000 R=0.9968
+fold3_stage2_excl            F0.5=0.9878 P=0.9973 R=0.9697
+fold3_stage2_global_reference F0.5=0.9878 P=0.9973 R=0.9697
+fold3_stage2_noexcl          F0.5=0.9878 P=0.9973 R=0.9697
+fold3_stage1_excl            F0.5=0.9732 P=0.9896 R=0.9463
+fold3_oracle                 F0.5=0.9990 P=1.0000 R=0.9965
+fold4_stage2_excl            F0.5=0.9879 P=0.9973 R=0.9698
+fold4_stage2_global_reference F0.5=0.9879 P=0.9973 R=0.9698
+fold4_stage2_noexcl          F0.5=0.9879 P=0.9973 R=0.9698
+fold4_stage1_excl            F0.5=0.9737 P=0.9897 R=0.9470
+fold4_oracle                 F0.5=0.9990 P=1.0000 R=0.9966
+fold4 US       F0.5=0.9873 P=0.9975 R=0.9681
+fold4 India    F0.5=0.9887 P=0.9971 R=0.9722
+leaderboard estimate 0.9704 (France assumed 0.87)
+threshold 0.712; total 1049s

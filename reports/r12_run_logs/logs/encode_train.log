@@ -1,0 +1,39 @@
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 5990.57it/s]
+/home/akshayvijaygudur_gmail_com/Star_Coders_Amazon_ML_Challenge/code/business_entity_resolution/src/er_v2/r10_retrieval.py:46: FutureWarning: The `get_sentence_embedding_dimension` method has been renamed to `get_embedding_dimension`.
+  shape=(side_rows(args.work, args.split, side), model.get_sentence_embedding_dimension()))
+encode train/s1: 200,000
+encode train/s1: 400,000
+encode train/s1: 600,000
+encode train/s1: 800,000
+encode train/s1: 1,000,000
+encode train/s1: 1,200,000
+encode train/s1: 1,400,000
+encode train/s1: 1,600,000
+encode train/s1: 1,800,000
+encode train/s1: 2,000,000
+encode train/s1: 2,200,000
+encode train/tg: 200,000
+encode train/tg: 400,000
+encode train/tg: 600,000
+encode train/tg: 800,000
+encode train/tg: 1,000,000
+encode train/tg: 1,200,000
+encode train/tg: 1,400,000
+encode train/tg: 1,600,000
+encode train/tg: 1,800,000
+encode train/tg: 2,000,000
+encode train/tg: 2,200,000
+encode train/tg: 2,400,000
+encode train/tg: 2,600,000
+encode train/tg: 2,800,000
+encode train/tg: 3,000,000
+encode train/tg: 3,200,000
+encode train/tg: 3,400,000
+encode train/tg: 3,600,000
+encode train/tg: 3,800,000
+encode train/tg: 4,000,000
+encode train/tg: 4,200,000
+encode train/tg: 4,400,000
+encode train/tg: 4,600,000
+encode train/tg: 4,800,000
+encode train/tg: 5,000,000

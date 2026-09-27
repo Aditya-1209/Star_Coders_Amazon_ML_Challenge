@@ -1,0 +1,2 @@
+# Preserve captured terminal logs byte-for-byte, including their whitespace.
+*.log -text whitespace=-blank-at-eol
