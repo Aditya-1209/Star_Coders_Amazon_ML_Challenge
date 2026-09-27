@@ -6,6 +6,11 @@
 > are preserved. Final cross-fitted R14 scores alone are insufficient; raw CE inputs
 > are still needed. Full-data runtime and accuracy are unmeasured.
 
+**R14 teammate:** use the [IAP/Drive transfer handoff](docs/r14_iap_transfer.txt)
+and [artifact readiness status](reports/r14_prefusion_transfer_status.md).
+The VM has no external IP. Raw components and a completed production manifest
+have not yet been supplied or transferred.
+
 The sections below describe older experiments, not this branch’s launch procedure.
 
 > **R10:** follow [the desktop neural guide](docs/README_r10.md).

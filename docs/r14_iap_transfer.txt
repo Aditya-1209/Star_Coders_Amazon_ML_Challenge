@@ -1,0 +1,126 @@
+R14 teammate / GPT handoff: transfer EXISTING pre-fusion evidence for R16
+
+Destination:
+  GCP project: amazon-ml-r9
+  Zone: asia-south1-c
+  VM: amazon-r9-train
+  SSH user: akshayvijaygudur_gmail_com
+  Destination directory: ~/r14_prefusion/
+  External IP: none; use authenticated Google Cloud IAP.
+
+The user reports that the public key tagged r12fr-pull is installed in the
+VM's ~/.ssh/authorized_keys. Use its matching private key already on the
+source machine. Never send private key contents through chat or in the archive.
+
+The source machine is the R14 Windows machine with D:\star_r14 and original
+ID mappings in D:\star_r10b\work\norm. This Mac session cannot access those
+files, and has not transferred anything or completed a production inputs.json.
+
+Required content:
+- Existing pre-fusion graph predictions for fold 3, fold 4, test.
+- Existing CE-A predictions for fold 3, fold 4, test.
+- Existing swapped CE-A predictions for fold 3, fold 4, test.
+- Existing CE-B predictions for fold 3, fold 4, test.
+- Completed inputs.json using the exact actual filenames, score-column names,
+  probability/logit scales, and verified training provenance.
+- If files use local sidx/tidx, include the original R14 six train/test norm
+  Parquets for Sources 1/2/3. They supply the ID mappings; do not substitute R12
+  norm files. Source 3 target indices follow Source 2 rows.
+- Even for ID-keyed scores, include the original R14 train Source1 ID row order
+  and reference it as train_source1_ids when omitting norm_dir.
+
+Use manifest paths relative to inputs.json, valid after copying to the VM.
+Preserve the original files. Copy existing predictions; do not retrain neural
+models or request another R12 score export. Inspect schemas and provenance
+before filling the manifest. The example filenames/columns are placeholders,
+not evidence of the actual files' contents.
+
+Manifest template at the requested commit:
+https://github.com/Aditya-1209/Star_Coders_Amazon_ML_Challenge/blob/33b2edf6b963c15ca2f555f6534122ce16f85441/docs/r16_prefusion_inputs.example.json
+
+Full input requirements and validation:
+https://github.com/Aditya-1209/Star_Coders_Amazon_ML_Challenge/blob/33b2edf6b963c15ca2f555f6534122ce16f85441/docs/README_r16_fast_ce_fusion.md
+
+Do NOT substitute final fusion_ab/r14_fold3.parquet, r14_fold4.parquet,
+or r14_test_scores.parquet. Those are cross-fitted final fusion outputs,
+not the independent components required by this experiment. Renaming them or
+changing the manifest's score_stage does not establish correct provenance.
+The final fusion_a.json and fusion_b.json models are not used here.
+
+Known producer-reported recipe (confirm against the actual producing runs):
+- Graph: fit folds 6/7; selected/tuned on fold 3 (inherited validation reuse).
+- CE-A: fit folds 0/1/8, early stopping on 9, 250k businesses, one epoch.
+- Swapped CE-A: the same CE-A weights, with pair order swapped during scoring.
+- CE-B: fit folds 0/1/8, early stopping on 9, 500k businesses, seed 2027,
+  one epoch.
+- CE scoring covered graph probabilities between 0.001 and 0.999.
+- Final R14 fusion: cross-fitted on fold 3; do not use those outputs here.
+
+Option A: direct upload from the R14 Windows machine through IAP
+
+Run in PowerShell after preparing and inspecting D:\star_r14\r14_prefusion.
+Replace only the private-key FILE PATH below with the existing matching path.
+Do not generate a replacement key and assume it matches the installed key.
+Authenticate to GCP if the source machine does not already have a usable login:
+
+  gcloud auth login
+
+Then run:
+
+  $R14Dir = "D:\star_r14\r14_prefusion"
+  $R14SshKey = "C:\PATH\TO\MATCHING_PRIVATE_KEY"
+  gcloud compute scp --recurse `
+    --tunnel-through-iap `
+    --project=amazon-ml-r9 `
+    --zone=asia-south1-c `
+    --ssh-key-file="$R14SshKey" `
+    "$R14Dir" `
+    "akshayvijaygudur_gmail_com@amazon-r9-train:~/"
+
+Confirm the existing destination before upload; preserve an existing
+r14_prefusion directory rather than silently overwriting another experiment.
+If IAP/IAM permissions prevent access, use Option B; no IAM changes are requested.
+
+Option B: archive handoff through Drive
+
+From the Windows source machine:
+
+  tar -czf "D:\star_r14\r14_prefusion.tar.gz" -C "D:\star_r14" "r14_prefusion"
+  Get-FileHash "D:\star_r14\r14_prefusion.tar.gz" -Algorithm SHA256
+
+Share the archive and SHA-256 through the agreed Drive location. Send the
+actual share link to the receiving user/session. Do not include SSH keys.
+The receiving user can download it and upload it through SSH-in-browser's
+UPLOAD FILE action. Do not make the archive publicly accessible unless the
+user explicitly requests that.
+
+On the VM, compare the archive checksum to the sender's result and inspect
+its contents before extraction:
+
+  sha256sum "$HOME/r14_prefusion.tar.gz"
+  tar -tzf "$HOME/r14_prefusion.tar.gz"
+
+After confirming it contains the expected r14_prefusion/ folder and preserving
+any existing destination, extract into the home directory:
+
+  tar -xzf "$HOME/r14_prefusion.tar.gz" -C "$HOME"
+  ls -lh "$HOME/r14_prefusion"
+  test -f "$HOME/r14_prefusion/inputs.json" && echo "manifest found"
+
+A manifest existing is NOT the same as a validated package. From the R16
+checkout at commit 33b2edf, run the actual preflight after transfer:
+
+  export R16_R14_PROVENANCE="$HOME/r14_prefusion/inputs.json"
+  export R16_SHUTDOWN_AT="2026-09-27T17:44:11Z"
+  bash scripts/vm_r16_fast_fusion.sh \
+    "$HOME/Star_Coders_Amazon_ML_Challenge/student_resource" --preflight
+
+Use the actual original organizer resource path if different. The stated
+shutdown is 27 September 2026, 17:44:11 UTC; do not reuse that date for a later
+session. Preserve the existing shutdown timer, R12 fallback, and unchanged
+gate. This handoff authorizes transfer and validation, not a new model run.
+
+Report back: actual source file list, verified score schemas/provenance,
+archive/checksums or transfer verification, destination file list, and the
+preflight result. If a raw component is missing, report which one; do not
+substitute final fusion scores or fabricate a completed manifest.

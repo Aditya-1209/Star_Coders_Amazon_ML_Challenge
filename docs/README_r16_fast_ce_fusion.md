@@ -13,6 +13,9 @@ fusion outputs. They are **not valid inputs to this experiment**. The original
 CE-A, swapped CE-A, CE-B and graph predictions are needed. Their locations
 have not yet been supplied or inspected. No new R12 export is needed.
 There is no trained full-data R16 fusion checkpoint or measured accuracy gain yet.
+The VM has no external IP: use the [IAP/Drive handoff](r14_iap_transfer.txt)
+for the existing raw files. [Transfer readiness](../reports/r14_prefusion_transfer_status.md)
+is tracked separately from the published model code.
 
 ## Why this experiment differs
 
@@ -169,10 +172,17 @@ tar -czf "$HOME/r16_fast_ce_fusion_results.tar.gz" \
   work/r16_fast_ce_fusion output/r16_fast_ce_fusion r16_fast_ce_fusion.log
 ```
 
-From your local machine, substitute your actual VM SSH destination:
+From a machine authenticated to the GCP project, download through IAP using
+the existing matching private-key file locally (replace only its file path):
 
 ```bash
-scp YOUR_VM_SSH_DESTINATION:~/r16_fast_ce_fusion_results.tar.gz .
+gcloud compute scp --tunnel-through-iap \
+  --project=amazon-ml-r9 --zone=asia-south1-c \
+  --ssh-key-file=/path/to/existing/matching_private_key \
+  'akshayvijaygudur_gmail_com@amazon-r9-train:~/r16_fast_ce_fusion_results.tar.gz' .
 ```
+
+The VM has no external IP; a direct Internet `scp` connection to its internal
+hostname is not a working route from this Mac.
 
 No new R12 export, full-model run, or website submission is performed here.
