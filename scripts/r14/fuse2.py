@@ -79,21 +79,37 @@ def ce_context(ce: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def build(work, split, ce_path, folds=None):
+def build(work, split, ce_paths, folds=None, all_features=False):
     path = work / ("eval_preds_stage3.parquet" if split == "train" else "test_preds_stage3.parquet")
     scores = pl.read_parquet(path)
     if folds is not None:
         scores = scores.filter(pl.col("fold").is_in(folds))
     scores = context(scores.with_columns(pl.col("sidx").cast(pl.UInt32), pl.col("tidx").cast(pl.UInt32)))
     unsure = scores.filter((pl.col("score") > LO) & (pl.col("score") < HI))
-    ce = pl.read_parquet(ce_path).with_columns(pl.col("sidx").cast(pl.UInt32), pl.col("tidx").cast(pl.UInt32))
+    ce = None
+    for k, path in enumerate(ce_paths):
+        one = pl.read_parquet(path).select(pl.col("sidx").cast(pl.UInt32), pl.col("tidx").cast(pl.UInt32),
+                                           pl.col("ce_logit").alias(f"ce_{k}"))
+        ce = one if ce is None else ce.join(one, on=["sidx", "tidx"], how="inner")
+    names = [f"ce_{k}" for k in range(len(ce_paths))]
+    ce = ce.with_columns(ce_logit=pl.mean_horizontal(names).cast(pl.Float32))
+    if len(names) == 1:
+        ce = ce.drop(names)
     unsure = unsure.join(ce_context(ce), on=["sidx", "tidx"], how="left")
     missing = unsure["ce_logit"].null_count()
     if missing:
         raise ValueError(f"{missing:,} uncertain {split} pairs have no cross-encoder score")
-    pairs = (pl.scan_parquet(work / f"stage3_{split}.parquet")
-             .select(pl.col("sidx").cast(pl.UInt32), pl.col("tidx").cast(pl.UInt32), *PAIR_COLS,
-                     *([] if "direct" in unsure.columns else ["direct"]))
+    source = pl.scan_parquet(work / f"stage3_{split}.parquet")
+    cols = PAIR_COLS
+    if all_features:
+        # exactly the (shift-checked) features the stage-3 graph model itself used
+        import json
+        used = json.loads((work / "models/stage3_metrics.json").read_text())["features"]
+        have = set(source.collect_schema().names())
+        cols = [c for c in used if c in have and c not in unsure.columns]
+    pairs = (source
+             .select(pl.col("sidx").cast(pl.UInt32), pl.col("tidx").cast(pl.UInt32), *cols,
+                     *([] if "direct" in unsure.columns or "direct" in cols else ["direct"]))
              .join(unsure.lazy().select("sidx", "tidx"), on=["sidx", "tidx"], how="semi")
              .unique(["sidx", "tidx"]).collect(engine="streaming"))
     unsure = unsure.join(pairs, on=["sidx", "tidx"], how="left")
@@ -112,8 +128,11 @@ def matrix(frame, features):
 
 
 def fit(train, valid, features, args):
-    params = {**PARAMS, "device": args.device, "nthread": args.threads}
+    params = {**PARAMS, "device": args.device, "nthread": args.threads, "max_depth": args.depth, "eta": args.eta}
     dtr, dva = matrix(train, features), matrix(valid, features)
+    if args.business_weights:
+        for d, f in ((dtr, train), (dva, valid)):
+            d.set_weight((1.0 / f.group_by("sidx").agg(n=pl.len()).join(f.select("sidx"), on="sidx", how="right")["n"]).to_numpy())
     dtr.set_label(train["label"].to_numpy())
     dva.set_label(valid["label"].to_numpy())
     model = xgb.train(params, dtr, args.rounds, evals=[(dva, "valid")], early_stopping_rounds=100,
@@ -152,8 +171,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--dataset", type=Path, required=True)
-    ap.add_argument("--ce-train", type=Path, required=True)
-    ap.add_argument("--ce-test", type=Path)
+    ap.add_argument("--ce-train", type=Path, nargs="+", required=True)
+    ap.add_argument("--ce-test", type=Path, nargs="+")
+    ap.add_argument("--all-features", action="store_true")
+    ap.add_argument("--depth", type=int, default=6)
+    ap.add_argument("--eta", type=float, default=0.03)
+    ap.add_argument("--business-weights", action="store_true")
+    ap.add_argument("--no-test", action="store_true")
     ap.add_argument("--output", type=Path, required=True)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--threads", type=int, default=16)
@@ -167,7 +191,7 @@ def main():
     target = truth(args, [3, 4]).select(pl.col("sidx").cast(pl.UInt32), pl.col("tidx").cast(pl.UInt32)).unique()
     country = anchors(args)
     a3, a4 = country.filter(fold_expr() == 3), country.filter(fold_expr() == 4)
-    scores, unsure = build(args.work, "train", args.ce_train, [3, 4])
+    scores, unsure = build(args.work, "train", args.ce_train, [3, 4], args.all_features)
     unsure = unsure.join(target.with_columns(label=pl.lit(1, pl.Int8)), on=["sidx", "tidx"], how="left") \
                    .with_columns(pl.col("label").fill_null(0), h=half())
     features = feature_names(unsure)
@@ -212,10 +236,10 @@ def main():
     log(json.dumps({k: {"fold3": v["fold3"], "fold4": v["fold4"]["macro_f05"], "by_country": v["fold4_by_country"]}
                     for k, v in results.items()}, indent=1))
 
-    if args.ce_test is None:
+    if args.ce_test is None or args.no_test:
         return
     from er_v2.predict import write_lists
-    tscores, tunsure = build(args.work, "test", args.ce_test)
+    tscores, tunsure = build(args.work, "test", args.ce_test, None, args.all_features)
     fused = apply(tscores, tunsure, predict([model_a, model_b], tunsure, features))
     tcountry = anchors(args, "test")
     chosen = results[best]

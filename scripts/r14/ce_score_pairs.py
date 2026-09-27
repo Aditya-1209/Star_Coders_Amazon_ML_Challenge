@@ -21,6 +21,8 @@ ap.add_argument("--pairs", type=Path, required=True)
 ap.add_argument("--out", type=Path, required=True)
 ap.add_argument("--batch", type=int, default=1024)
 ap.add_argument("--chunk", type=int, default=200_000)
+ap.add_argument("--swap", action="store_true", help="feed (target, source) order: test-time augmentation")
+ap.add_argument("--model", type=Path, help="model dir (default WORK/ce_model)")
 args = ap.parse_args()
 
 import torch
@@ -28,7 +30,10 @@ from transformers import AutoModelForSequenceClassification
 
 t0 = time.time()
 cache = PairTokens(args.work, args.split)
-model = AutoModelForSequenceClassification.from_pretrained(args.work / "ce_model").to("cuda").eval()
+if args.swap:
+    import functools
+    cache.batch = functools.partial(cache.batch, swap=True)
+model = AutoModelForSequenceClassification.from_pretrained(args.model or args.work / "ce_model").to("cuda").eval()
 pairs = pl.read_parquet(args.pairs).select(pl.col("sidx").cast(pl.UInt32), pl.col("tidx").cast(pl.UInt32)).unique()
 out = []
 for i in range(0, len(pairs), args.chunk):
