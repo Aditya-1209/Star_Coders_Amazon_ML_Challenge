@@ -76,7 +76,10 @@ branch check after this update found R13 still at `bfb2ef3`, with no completed
 R13 scores available locally, and no R14 branch. Do not spend another full
 training run merely to produce a differently named output.
 
-Use [the verified R12 export](../docs/README_r12_evidence_export.md) to obtain
+The user subsequently confirmed that an R12 export archive was downloaded
+and sent to the R14 teammate. Verify that existing archive before requesting
+anything more; it has not yet been made accessible in this workspace.
+Use [the R12 export checks](../docs/README_r12_evidence_export.md) to verify
 final fused scores and entity/source mappings. Align comparison scores on
 entity IDs and the original R12 business partitions; audit their training
 provenance before combining them. Preserve the union of candidates and mark

@@ -1,5 +1,20 @@
 # Export completed R12 evidence for comparison
 
+**An R12 export archive already exists.** The user reports that it was
+downloaded and sent to the R14 teammate. Inspect that archive first; the
+export command below is not a request to regenerate it. This workspace has
+not yet received its path or contents. The screenshot refers to a producer
+named `export_r12_scores.py`, which is not present in the checked branches;
+do not assume it is the same as this repository's `export_r12_evidence.py`.
+
+Existing files are sufficient if they supply equivalent final scores, stable
+entity/source mappings, the original business partitions, full truth and all
+Source 1 rows, with selection/training provenance and reproduced R12 results.
+The filenames below describe this repository's exporter; equivalent evidence
+under other filenames does not require another export. Inspect archive
+members, metadata and table schemas, then verify checksums and baseline
+decisions before deciding whether anything is actually missing.
+
 The supplied 27 September handoff reports that R16-fast retained R12: its 3B
 gain was 0.00003255, below the unchanged 0.0005 gate, with a negative lower
 confidence bound. That result is a successful fallback, not a new measured
@@ -22,7 +37,7 @@ generate a new submission, change any gate, or alter the VM shutdown timer.
 The full R16 training recipe remains a separate experiment; this command does
 not launch it.
 
-## Run on the existing VM
+## Export command reference, only if inspection establishes a need
 
 First check the actual clock and shutdown schedule. The timestamp in the
 handoff is historical; this tool cannot check a VM that it cannot access.

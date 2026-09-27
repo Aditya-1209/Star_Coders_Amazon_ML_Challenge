@@ -1,11 +1,48 @@
 # R16: neural matching with a learned no-match decision
 
+## Current follow-up: reuse the completed runs
+
+The user reports that R12 scored **0.984 publicly** and **0.990388 on fold 4**.
+R16-fast and R15 address-rescue both completed and retained R12. The existing
+R12 export archive has already been downloaded and sent to the R14 teammate.
+Inspect that archive before requesting or running any additional export.
+Its contents have not yet been available in this workspace for verification.
+
+The next experiment is an **R12–R14 complementarity audit and small score-blend
+comparison**, using completed predictions. First verify final fused R12 scores,
+entity/source mappings, original 3A/3B/fold-4 membership, all Source 1 rows and
+compatible R14 training provenance. Different filenames alone do not mean
+evidence is missing: `export_r12_scores.py` in the supplied screenshot is not
+the `export_r12_evidence.py` script in this checkout. Inspect the actual files
+and producing script rather than assuming either schema.
+
+On 3A, compare R14's corrections and new errors against frozen R12, including
+missing-address pairs and candidates unique to each model. If there is useful
+complementary evidence, compare a small, predefined grid of R14 blend weights
+(0, 0.1, 0.25, 0.5, 1), checking score calibration on 3A. Preserve the candidate
+union with explicit missing-score handling. Keep R12 on ties and freeze one
+proposal before 3B. Use the existing **0.0005 minimum gain, positive approximate
+one-sided lower bound, and 0.002 country-regression guard**. Fold 4 remains
+report-only; these previously examined partitions are not pristine holdouts.
+
+Preserve `work/r12` and `.venv-r12`. Do not launch the full training recipe
+below, rerun either failed fast experiment, or rerun an exporter for this
+follow-up. If inspection finds a gap, collect only that specific existing
+artifact or missing evidence. The archive location/contents and R14 predictions
+are still needed before this comparison can run here.
+
+See [the completed rescue handoff](../reports/r15_rescue_completed_handoff.md)
+and [the export contents and checks](README_r12_evidence_export.md).
+
+## Earlier full-training recipe
+
 R16 is a new experiment for your existing **Mumbai `asia-south1-c` VM:
 `g2-standard-32`, one NVIDIA L4 24 GB, 32 vCPUs, 128 GB RAM, 200 GB balanced
 Persistent Disk, Ubuntu 24.04 and Python 3.12.3**.
 
 R12 achieved **0.990387533 local macro F0.5** in a measured 12.5-hour L4 run.
-Its website score was not included in the published results. **R16 has no
+Its website score was not included in the original published logs; the user
+subsequently reported 0.984 publicly. **Full R16 has no
 full-data GPU or website score yet.** The 99% website goal is a reporting
 objective, not a score this branch claims to have achieved.
 
