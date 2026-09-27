@@ -1,5 +1,12 @@
 # Star Coders - Amazon ML Challenge
 
+> **R16:** follow [the Mumbai L4 run guide](docs/README_r16.md).
+> Reuses one neural encoder/CE and adds a business no-match classifier, sibling
+> evidence, and validation against a rebuilt R12-style CE ensemble.
+> Targets the existing `g2-standard-32` / L4 / 128 GB / 200 GB balanced-disk VM.
+> R12 measured **99.04% locally**; **R16 and its 99% website target are unmeasured**.
+> Start in a separate checkout with fresh `work/r16`; job/guest limits are 16/17 hours.
+
 > **R13:** follow [the R13 run guide](docs/README_r13.md).
 > Built from R12 with model-mined cross-encoder negatives, neural evidence from
 > other confidently matched records, and corrected final competition features.

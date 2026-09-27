@@ -127,12 +127,19 @@ class CloudTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('bash'), 'Requires bash')
     def test_supervisor_stops_early_preserves_failure_and_never_extends_deadline(self):
+        self.check_supervisor('r13')
+
+    @unittest.skipUnless(shutil.which('bash'), 'Requires bash')
+    def test_r16_supervisor_preserves_exit_status_and_deadline(self):
+        self.check_supervisor('r16')
+
+    def check_supervisor(self, version):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'scripts').mkdir()
-            shutil.copyfile(ROOT / 'scripts/vm_r13_job.sh', root / 'scripts/vm_r13_job.sh')
-            (root / '.venv-r13/bin').mkdir(parents=True)
-            python = root / '.venv-r13/bin/python'
+            shutil.copyfile(ROOT / f'scripts/vm_{version}_job.sh', root / f'scripts/vm_{version}_job.sh')
+            (root / f'.venv-{version}/bin').mkdir(parents=True)
+            python = root / f'.venv-{version}/bin/python'
             python.write_text('#!/usr/bin/env bash\nexit "${TEST_RUN_EXIT:-0}"\n')
             python.chmod(0o755)
             sudo = root / 'sudo'
@@ -140,12 +147,12 @@ class CloudTests(unittest.TestCase):
             sudo.chmod(0o755)
             log = root / 'shutdowns'
             env = {**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
-                   'TEST_SHUTDOWN_LOG': str(log), 'R13_SHUTDOWN_ON_EXIT': '1'}
+                   'TEST_SHUTDOWN_LOG': str(log)}
             for status, remaining, enabled in ((0, 3600, '1'), (3, 3600, '1'), (0, 120, '1'), (0, 3600, '0')):
                 log.write_text('')
-                env.update(TEST_RUN_EXIT=str(status), R13_STOP_EPOCH=str(int(time.time()) + remaining),
-                           R13_SHUTDOWN_ON_EXIT=enabled)
-                result = subprocess.run(['bash', str(root / 'scripts/vm_r13_job.sh')], env=env,
+                env.update(TEST_RUN_EXIT=str(status), **{version.upper() + '_STOP_EPOCH': str(int(time.time()) + remaining),
+                           version.upper() + '_SHUTDOWN_ON_EXIT': enabled})
+                result = subprocess.run(['bash', str(root / f'scripts/vm_{version}_job.sh')], env=env,
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, status, result.stderr)
                 if remaining > 600 and enabled == '1':

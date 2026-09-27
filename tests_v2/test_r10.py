@@ -162,6 +162,7 @@ np.testing.assert_array_equal(found, exact_topk(q, x, ids, 4))
 
 class R10PipelineTest(unittest.TestCase):
     r13 = False
+    r16 = False
 
     def test_offline_neural_ann_graph_fusion_and_official_format(self):
         # No model download: a tiny real BERT tests gradients, serialization and token pairing.
@@ -233,7 +234,8 @@ class R10PipelineTest(unittest.TestCase):
             self.assertTrue(set(sample.select(fold_expr())['fold']) <= set(TRAIN_FOLDS))
             run('r10_ce', 'train', '--dataset', dataset, '--base-model', base, '--device', 'cpu', '--threads', 2,
                 '--max-length', 32, '--batch', 8, '--score-batch', 16, '--epochs', 1, '--train-businesses', 25, '--valid-businesses', 10,
-                *(['--mine-stage2', '--token-cache-gb', '.01'] if self.r13 else []))
+                *(['--mine-stage2'] if self.r13 and not self.r16 else []),
+                *(['--token-cache-gb', '.01'] if self.r13 else []))
             self.assertEqual(json.loads((work / 'ce_model/training.json').read_text())['train_folds'], TRAIN_FOLDS)
             self.assertEqual(json.loads((work / 'ce_model/training.json').read_text())['token_cache']['mode'],
                              'ram' if self.r13 else 'mmap')
@@ -241,26 +243,35 @@ class R10PipelineTest(unittest.TestCase):
                 run('r10_ce', 'score', '--split', split, '--device', 'cpu', '--score-batch', 32, '--threads', 2,
                     *(['--token-cache-gb', '.01'] if self.r13 else []))
             final = ['--dataset', dataset, '--output', out, '--device', 'cpu', '--threads', 2, '--rounds', 8]
-            if self.r13:
+            if self.r13 and not self.r16:
                 final += ['--r13-features', '--target-leaderboard', '.985']
+            module = 'r16' if self.r16 else 'r10'
             for stage in ('fit', 'select', 'evaluate', 'inference'):
-                run('r10', stage, *final)
+                run(module, stage, *final)
             # Exercise both output branches regardless of the tiny-data gate outcome.
             selection_path = work / 'selection.json'
             selection = json.loads(selection_path.read_text())
             frozen = selection_path.read_bytes()
-            if self.r13:
+            if self.r16:
+                report = json.loads((work / 'metrics.json').read_text())
+                self.assertEqual(report['version'], 'r16-pair-presence-1')
+                self.assertIsNone(report['amazon_score'])
+                self.assertEqual(report['target_leaderboard'], .99)
+                self.assertIn('singletons', report)
+            elif self.r13:
                 report = json.loads((work / 'metrics.json').read_text())
                 self.assertEqual(report['version'], 'r13-mined-siblings-1')
                 self.assertEqual(report['target_leaderboard'], .985)
                 self.assertIsNone(report['target_met_on_leaderboard'])
                 self.assertIn('by_target_address', report['errors'])
-            run('r10', 'evaluate', *final)
+            run(module, 'evaluate', *final)
             self.assertEqual(selection_path.read_bytes(), frozen)
-            for choice in ('reference', 'r13' if self.r13 else 'r10'):
+            for choice in ('reference', 'r16' if self.r16 else 'r13' if self.r13 else 'r10'):
                 selection['selected'] = choice
+                if self.r16 and choice == 'r16':
+                    selection['proposal'].update(model='mean', weight=.5, presence_cutoff=.1)
                 selection_path.write_text(json.dumps(selection))
-                run('r10', 'inference', *final)
+                run(module, 'inference', *final)
                 matches = pl.read_csv(out / 'matching_results.tsv', separator='\t', infer_schema=False)
                 self.assertEqual(matches.height, 240)  # includes France and singletons
                 validator = ROOT / 'student_resource/utils/validate_submission.py'

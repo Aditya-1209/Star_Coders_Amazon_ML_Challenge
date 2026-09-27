@@ -52,6 +52,7 @@ def code_hash():
     files += [Path(__file__), ROOT / 'code/business_entity_resolution/requirements_r10.txt']
     files += [ROOT / 'code/business_entity_resolution/requirements_v2.txt']
     files += sorted((ROOT / 'scripts').glob('run_r13.py'))
+    files += sorted((ROOT / 'scripts').glob('run_r16.py'))
     digest = hashlib.sha256()
     for path in files:
         digest.update(str(path.relative_to(ROOT)).encode())
@@ -251,8 +252,9 @@ def stop_child(child):
         child.wait(timeout=10)
 
 
-def main(argv=None, argument_parser=None):
+def main(argv=None, argument_parser=None, command_builder=None):
     p = argument_parser or parser()
+    build_commands = command_builder or commands
     args = p.parse_args(argv)
     if min(args.threads, args.prepare_buffer_rows, args.rounds, args.ce_batch, args.ce_score_batch, args.ce_epochs, args.encode_batch,
            args.nprobe, args.neural_k, args.search_k, args.ce_accumulation, args.encoder_pairs,
@@ -264,7 +266,7 @@ def main(argv=None, argument_parser=None):
     if args.work == args.dataset or args.output == args.work or args.dataset.is_relative_to(args.work):
         p.error('Work, dataset and output must be separate paths')
     if args.plan:
-        for stage, (command, _) in commands(args).items():
+        for stage, (command, _) in build_commands(args).items():
             print(stage, subprocess.list2cmdline(command))
         return
     args.work.mkdir(parents=True, exist_ok=True)
@@ -300,8 +302,8 @@ def main(argv=None, argument_parser=None):
             raise KeyboardInterrupt(f'Runner interrupted by signal {signum}')
         previous_sigterm = signal.signal(signal.SIGTERM, interrupted)
         try:
-            for stage in commands(args):
-                command, outputs = commands(args)[stage]
+            for stage in build_commands(args):
+                command, outputs = build_commands(args)[stage]
                 previous = state['completed'].get(stage)
                 if previous:
                     if previous['command'] != command or previous['outputs'] != fingerprint(outputs):

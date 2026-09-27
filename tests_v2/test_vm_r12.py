@@ -18,8 +18,8 @@ class VMTests(unittest.TestCase):
     def fixture(self, root):
         (root / 'scripts').mkdir()
         shutil.copyfile(ROOT / f'scripts/vm_{self.version}.sh', root / f'scripts/vm_{self.version}.sh')
-        if self.version == 'r13':
-            shutil.copyfile(ROOT / 'scripts/vm_r13_job.sh', root / 'scripts/vm_r13_job.sh')
+        if self.version in ('r13', 'r16'):
+            shutil.copyfile(ROOT / f'scripts/vm_{self.version}_job.sh', root / f'scripts/vm_{self.version}_job.sh')
         requirements = root / 'code/business_entity_resolution'
         requirements.mkdir(parents=True)
         for name in ('requirements_v2.txt', 'requirements_r10.txt'):
@@ -46,7 +46,7 @@ class VMTests(unittest.TestCase):
 printf 'python %s\n' "$*" >> "$R12_TEST_CALLS"
 case "$*" in
   *'pip check'*) exit "${R12_TEST_FAIL_CHECK:-0}" ;;
-  *'math.ceil'*) echo 720 ;;
+  *'math.ceil'*) echo $(( ${@: -1} * 60 + 60 )) ;;
   *'--preflight'*|*'--plan'*|*'unittest'*|*'-m pip'*|*'import torch'*) exit 0 ;;
 esac
 echo running
@@ -75,7 +75,7 @@ sleep 2
             self.assertIn('--dataset ' + str(resource / 'dataset'), calls)
             self.assertIn('--validator ' + str(resource / 'utils/validate_submission.py'), calls)
             self.assertIn('unittest discover -s tests_v2', calls)
-            self.assertIn('sudo shutdown -h +720', calls)
+            self.assertIn('sudo shutdown -h +' + ('1020' if self.version == 'r16' else '720'), calls)
             duplicate = subprocess.run(command, env=env, capture_output=True, text=True, timeout=20)
             self.assertNotEqual(duplicate.returncode, 0)
             self.assertIn('already active', duplicate.stdout)
