@@ -10,11 +10,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@unittest.skipUnless(os.name == 'posix', 'Linux launcher requires bash/flock')
+@unittest.skipUnless(os.name == 'posix' and shutil.which('flock') and shutil.which('sha256sum'),
+                     'Linux launcher requires bash/flock/sha256sum')
 class VMTests(unittest.TestCase):
+    version = 'r12'
+
     def fixture(self, root):
         (root / 'scripts').mkdir()
-        shutil.copyfile(ROOT / 'scripts/vm_r12.sh', root / 'scripts/vm_r12.sh')
+        shutil.copyfile(ROOT / f'scripts/vm_{self.version}.sh', root / f'scripts/vm_{self.version}.sh')
         requirements = root / 'code/business_entity_resolution'
         requirements.mkdir(parents=True)
         for name in ('requirements_v2.txt', 'requirements_r10.txt'):
@@ -34,7 +37,7 @@ class VMTests(unittest.TestCase):
         sudo = fakebin / 'sudo'
         sudo.write_text('#!/usr/bin/env bash\nprintf "sudo %s\\n" "$*" >> "$R12_TEST_CALLS"\n')
         sudo.chmod(0o755)
-        venv = root / '.venv-r12/bin'
+        venv = root / f'.venv-{self.version}/bin'
         venv.mkdir(parents=True)
         python = venv / 'python'
         python.write_text('''#!/usr/bin/env bash
@@ -57,14 +60,14 @@ sleep 2
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             resource, env = self.fixture(root)
-            command = ['bash', str(root / 'scripts/vm_r12.sh'), str(resource)]
+            command = ['bash', str(root / f'scripts/vm_{self.version}.sh'), str(resource)]
             first = subprocess.run(command, env=env, capture_output=True, text=True, timeout=20)
             self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
             for _ in range(50):
                 if (root / 'started').exists():
                     break
                 time.sleep(.02)
-            self.assertTrue((root / '.venv-r12/.ready').exists())
+            self.assertTrue((root / f'.venv-{self.version}/.ready').exists())
             calls = (root / 'calls').read_text()
             self.assertIn('pip check', calls)  # executable alone did not skip package repair
             self.assertIn('--dataset ' + str(resource / 'dataset'), calls)
@@ -75,17 +78,17 @@ sleep 2
             self.assertNotEqual(duplicate.returncode, 0)
             self.assertIn('already active', duplicate.stdout)
             time.sleep(2.1)
-            self.assertIn('running', (root / 'work/r12/runner.log').read_text())
+            self.assertIn('running', (root / f'work/{self.version}/runner.log').read_text())
 
     def test_failed_dependency_install_never_marks_ready_or_launches(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             resource, env = self.fixture(root)
             env['R12_TEST_FAIL_CHECK'] = '1'
-            result = subprocess.run(['bash', str(root / 'scripts/vm_r12.sh'), str(resource)],
+            result = subprocess.run(['bash', str(root / f'scripts/vm_{self.version}.sh'), str(resource)],
                                     env=env, capture_output=True, text=True, timeout=20)
             self.assertNotEqual(result.returncode, 0)
-            self.assertFalse((root / '.venv-r12/.ready').exists())
+            self.assertFalse((root / f'.venv-{self.version}/.ready').exists())
             self.assertFalse((root / 'started').exists())
             self.assertNotIn('shutdown', (root / 'calls').read_text())
 

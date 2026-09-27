@@ -61,7 +61,20 @@ def frame_for(args, split, folds=None):
     if folds is not None:
         source = source.filter(pl.col('fold').is_in(folds))
     scores = pl.scan_parquet(args.work / f'ce_{split}.parquet')
-    return attach_ce(source.collect(engine='streaming'), scores.collect(engine='streaming'))
+    out = attach_ce(source.collect(engine='streaming'), scores.collect(engine='streaming'))
+    if getattr(args, 'r13_features', False):
+        from .r13_evidence import FEATURES
+        evidence = pl.scan_parquet(args.work / f'r13_evidence_{split}.parquet')
+        if folds is not None:
+            evidence = evidence.filter(fold_expr().is_in(folds))
+        out = out.join(evidence.collect(engine='streaming'), on=['sidx', 'tidx'], how='left', validate='1:1')
+        if any(out[c].null_count() or not out[c].is_finite().all() for c in FEATURES):
+            raise ValueError('Missing/non-finite R13 sibling evidence; rerun evidence stage')
+    return out
+
+
+def version(args):
+    return 'r13-mined-siblings-1' if getattr(args, 'r13_features', False) else VERSION
 
 
 def weights(frame):
@@ -74,8 +87,11 @@ def fit_final(args):
     valid = data.filter((pl.col('fold') == 3) & (half() == 0))
     shift = json.loads((args.work / 'shift_check.json').read_text()) if (args.work / 'shift_check.json').exists() else {}
     features = feature_cols(data, 'enhanced' if shift.get('allow_enhanced', False) else 'baseline')
+    if getattr(args, 'r13_features', False):
+        from .r13_evidence import INCOMPLETE_TARGET_CONTEXT
+        features = [c for c in features if c not in INCOMPLETE_TARGET_CONTEXT]
     del data
-    info = {'version': VERSION, 'features': features, 'variants': {}}
+    info = {'version': version(args), 'features': features, 'variants': {}}
     for name, parameters in VARIANTS.items():
         model = fit(weights(train) if name == 'business' else train, features,
                     weights(valid) if name == 'business' else valid, args.rounds,
@@ -172,7 +188,7 @@ def select(args):
                                 best['country_thresholds'], 'score')
     base_b = baseline_decide(args, base.join(b.select('sidx'), on='sidx', how='semi'), b)
     comparison = gate(selected_b, base_b, target, b, args.minimum_gain)
-    result = {'version': VERSION, 'selected': 'r10' if comparison['passed'] else 'reference',
+    result = {'version': version(args), 'selected': ('r13' if getattr(args, 'r13_features', False) else 'r10') if comparison['passed'] else 'reference',
         'proposal': best, 'gate': comparison, 'trials_on_3A': trial,
         'protocol_note': '3B is held out only for the new final layer; inherited earlier layers use fold 3. Fold 4 is report-only here but has been inspected in past experiments.'}
     save_json(args.work / 'selection.json', result)
@@ -204,15 +220,21 @@ def evaluate(args):
     baseline = baseline_decide(args, baseline_scores(args, 'train', 4), country)
     target = truth(args, [4])
     metrics = macro_f05(chosen, target, country['sidx'])
-    report = {'version': VERSION, 'selected': selection['selected'], 'local_fold4': metrics,
+    report = {'version': version(args), 'selected': selection['selected'], 'local_fold4': metrics,
         'reference_fold4': macro_f05(baseline, target, country['sidx']),
         'candidate_oracle_fold4': macro_f05(scores.join(target, on=['sidx', 'tidx']), target, country['sidx']),
         'by_country': by_country(chosen, target, country), 'target_local': args.target_local,
         'target_met_locally': metrics['macro_f05'] >= args.target_local, 'amazon_score': None,
+        'target_leaderboard': getattr(args, 'target_leaderboard', None), 'target_met_on_leaderboard': None,
         'user_reported_r8': {'local': .956, 'online': .954}, 'selection': selection,
         'limitations': ['No measured France score: training has no France labels.',
             'Rebuilt R8-style reference uses the R10 candidates, encoder and rescue rule; it is not the old submitted artifact.',
             'The local target is a reporting objective, not a guaranteed or measured leaderboard result.']}
+    if getattr(args, 'r13_features', False):
+        from .r13_diagnostics import error_report
+        report['errors'] = error_report(args.work, scores, chosen, target)
+        report['user_reported_r11'] = {'local': .9872343313262878, 'online': .977}
+        report['limitations'][1] = 'Reference is the rebuilt R12 graph model, not a measured R12 website submission.'
     save_json(args.work / 'metrics.json', report)
     print(json.dumps(report, indent=2), flush=True)
 
@@ -242,8 +264,10 @@ def main():
     p.add_argument('--batch-rows', type=int, default=50000)
     p.add_argument('--minimum-gain', type=float, default=.0005)
     p.add_argument('--target-local', type=float, default=.975)
+    p.add_argument('--target-leaderboard', type=float, help='Unmeasured website objective; never used to select a model')
+    p.add_argument('--r13-features', action='store_true')
     args = p.parse_args()
-    if min(args.threads, args.rounds, args.batch_rows) < 1 or args.minimum_gain < 0 or not 0 < args.target_local <= 1:
+    if min(args.threads, args.rounds, args.batch_rows) < 1 or args.minimum_gain < 0 or not 0 < args.target_local <= 1 or (args.target_leaderboard is not None and not 0 < args.target_leaderboard <= 1):
         p.error('Invalid runtime counts or gain')
     {'fit': fit_final, 'select': select, 'evaluate': evaluate, 'inference': inference}[args.stage](args)
 

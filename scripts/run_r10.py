@@ -50,6 +50,7 @@ def code_hash():
     files += sorted((ROOT / 'scripts/analysis').glob('*.py'))
     files += [Path(__file__), ROOT / 'code/business_entity_resolution/requirements_r10.txt']
     files += [ROOT / 'code/business_entity_resolution/requirements_v2.txt']
+    files += sorted((ROOT / 'scripts').glob('run_r13.py'))
     digest = hashlib.sha256()
     for path in files:
         digest.update(str(path.relative_to(ROOT)).encode())
@@ -80,6 +81,8 @@ def parser():
     p.add_argument('--shard-pairs', type=int, default=2000000)
     p.add_argument('--r11-features', action='store_true',
                    help='stage-2 --lookalike and --record-competition features')
+    p.add_argument('--r13-features', action='store_true',
+                   help='R11 features plus mined CE negatives, neural siblings and stable final context')
     p.add_argument('--encode-batch', type=int, default=256)
     p.add_argument('--nprobe', type=int, default=96)
     p.add_argument('--search-k', type=int, default=96)
@@ -87,6 +90,7 @@ def parser():
     p.add_argument('--rescue-k', type=int, default=8)
     p.add_argument('--max-hours', type=float, default=24)
     p.add_argument('--target-local', type=float, default=.975, help='reporting objective only; never changes selection')
+    p.add_argument('--target-leaderboard', type=float, help='website reporting objective only; unmeasured until submitted')
     p.add_argument('--reserve-gb', type=float, default=12)
     p.add_argument('--resume', action='store_true')
     p.add_argument('--plan', action='store_true')
@@ -132,7 +136,7 @@ def commands(args):
             '--shard-pairs', args.shard_pairs, '--overwrite'), w / f'feats_{split}')
     add('shift_check', [py, '-u', str(ROOT / 'scripts/analysis/r7_shift_check.py'), '--work', str(w), '--threads', str(args.threads)], w / 'shift_check.json')
     add('train', module('train', *data, *runtime, *trainopts, '--neural', '--neural-rescue-k', args.rescue_k,
-        *(['--lookalike', '--record-competition'] if args.r11_features else []),
+        *(['--lookalike', '--record-competition'] if args.r11_features or args.r13_features else []),
         '--max-depth', 8, '--hist-cache-nodes', 1024), w / 'stage2_train.parquet', w / 'eval_preds.parquet',
         *[m / n for n in ('stage1.json', 'stage1_b.json', 'stage2.json', 'metrics.json')])
     add('predict', module('predict', *runtime, '--output', args.output / 'stage2'), w / 'test_preds.parquet')
@@ -141,6 +145,10 @@ def commands(args):
             '--support-anchors', 1000, '--hist-cache-nodes', 1024, '--output', args.output / 'reference'),
             w / f'stage3_{split}.parquet', w / ('eval_preds_stage3.parquet' if split == 'train' else 'test_preds_stage3.parquet'),
             *([m / 'stage3.json', m / 'stage3_metrics.json'] if split == 'train' else []))
+    if args.r13_features:
+        for split in ('train', 'test'):
+            add('evidence_' + split, module('r13_evidence', '--split', split),
+                w / f'r13_evidence_{split}.parquet', w / f'r13_evidence_{split}.json')
     for split in ('train', 'test'):
         add('tokens_' + split, module('r10_ce', 'tokens', '--split', split),
             *[w / 'ce_tokens' / f'{split}_{side}{suffix}.npy' for side in ('s1', 'tg') for suffix in ('', '_lengths')],
@@ -149,11 +157,14 @@ def commands(args):
               '--score-batch', str(args.ce_score_batch), '--epochs', str(args.ce_epochs),
               '--accumulation', str(args.ce_accumulation), '--train-businesses', str(args.ce_train_businesses),
               *([] if args.ce_checkpointing else ['--no-checkpointing'])]
-    add('ce_train', module('r10_ce', 'train', *data, *ceopts), w / 'ce_model')
+    add('ce_train', module('r10_ce', 'train', *data, *ceopts,
+        *(['--mine-stage2'] if args.r13_features else [])), w / 'ce_model')
     for split in ('train', 'test'):
         add('ce_score_' + split, module('r10_ce', 'score', '--split', split, *ceopts), w / f'ce_{split}.parquet')
     finalopts = [*data, '--output', str(args.output), '--device', args.device, '--threads', str(args.threads),
-                 '--rounds', str(args.rounds), '--target-local', str(args.target_local)]
+                 '--rounds', str(args.rounds), '--target-local', str(args.target_local),
+                 *(['--r13-features'] if args.r13_features else []),
+                 *(['--target-leaderboard', str(args.target_leaderboard)] if args.target_leaderboard is not None else [])]
     add('fit', module('r10', 'fit', *finalopts), w / 'r10_models.json', m / 'r10_pair.json', m / 'r10_business.json')
     add('select', module('r10', 'select', *finalopts), w / 'selection.json')
     add('evaluate', module('r10', 'evaluate', *finalopts), w / 'metrics.json')
@@ -224,12 +235,12 @@ def stop_child(child):
         child.wait(timeout=10)
 
 
-def main():
-    p = parser()
-    args = p.parse_args()
+def main(argv=None, argument_parser=None):
+    p = argument_parser or parser()
+    args = p.parse_args(argv)
     if min(args.threads, args.rounds, args.ce_batch, args.ce_score_batch, args.ce_epochs, args.encode_batch,
            args.nprobe, args.neural_k, args.search_k, args.ce_accumulation, args.encoder_pairs,
-           args.ce_train_businesses, args.shard_pairs) < 1 or args.neural_k >= 65535 or not 0 <= args.rescue_k <= args.neural_k or not 0 < args.max_hours <= 72 or args.reserve_gb < 1 or not 0 < args.target_local <= 1:
+           args.ce_train_businesses, args.shard_pairs) < 1 or args.neural_k >= 65535 or not 0 <= args.rescue_k <= args.neural_k or not 0 < args.max_hours <= 72 or args.reserve_gb < 1 or not 0 < args.target_local <= 1 or (args.target_leaderboard is not None and not 0 < args.target_leaderboard <= 1):
         p.error('Invalid counts, rescue size, storage reserve or deadline')
     for name in ('work', 'dataset', 'output', 'encoder', 'validator'):
         if getattr(args, name) is not None:
@@ -315,7 +326,8 @@ def main():
                 'stage_seconds': {k: v['seconds'] for k, v in state['completed'].items()}}
             save(args.work / 'result.json', result)
             value = metrics['local_fold4']['macro_f05']
-            (args.work / 'result.md').write_text(f'Run complete. Official TSV validation: PASS.\n\nSelected: {metrics["selected"]}. Local fold-4 macro F0.5: {value:.6f}.\n\n{args.target_local:.1%} local target met: {value >= args.target_local}. Amazon leaderboard score: not measured.\n', encoding='utf-8')
+            website = f' Website target: {args.target_leaderboard:.1%} (unverified).' if args.target_leaderboard is not None else ''
+            (args.work / 'result.md').write_text(f'Run complete. Official TSV validation: PASS.\n\nSelected: {metrics["selected"]}. Local fold-4 macro F0.5: {value:.6f}.\n\n{args.target_local:.1%} local target met: {value >= args.target_local}. Amazon leaderboard score: not measured.{website}\n', encoding='utf-8')
             state.update(status='complete', finished=now())
             save(manifest, state)
             print(f'Complete: {args.work / "result.md"}')

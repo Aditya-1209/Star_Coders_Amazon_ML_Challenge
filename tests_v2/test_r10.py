@@ -161,6 +161,8 @@ np.testing.assert_array_equal(found, exact_topk(q, x, ids, 4))
 
 
 class R10PipelineTest(unittest.TestCase):
+    r13 = False
+
     def test_offline_neural_ann_graph_fusion_and_official_format(self):
         # No model download: a tiny real BERT tests gradients, serialization and token pairing.
         from transformers import BertConfig, BertForSequenceClassification, BertTokenizer
@@ -213,6 +215,9 @@ class R10PipelineTest(unittest.TestCase):
             run('predict', *runtime, '--output', out / 'reference2')
             run('stage3', *runtime, '--dataset', dataset, '--rounds', 8, '--split', 'train', '--support-anchors', 25)
             run('stage3', *runtime, '--split', 'test', '--support-anchors', 25, '--output', out / 'reference')
+            if self.r13:
+                for split in ('train', 'test'):
+                    run('r13_evidence', '--split', split, '--batch-rows', 31)
             from er_v2.neural import Embeddings
             emb = Embeddings(work, 'train')
             self.assertIsInstance(emb.tg, np.memmap)
@@ -227,20 +232,29 @@ class R10PipelineTest(unittest.TestCase):
             sample = samples(work, dataset, TRAIN_FOLDS, 100)
             self.assertTrue(set(sample.select(fold_expr())['fold']) <= set(TRAIN_FOLDS))
             run('r10_ce', 'train', '--dataset', dataset, '--base-model', base, '--device', 'cpu', '--threads', 2,
-                '--max-length', 32, '--batch', 8, '--score-batch', 16, '--epochs', 1, '--train-businesses', 25, '--valid-businesses', 10)
+                '--max-length', 32, '--batch', 8, '--score-batch', 16, '--epochs', 1, '--train-businesses', 25, '--valid-businesses', 10,
+                *(['--mine-stage2'] if self.r13 else []))
             self.assertEqual(json.loads((work / 'ce_model/training.json').read_text())['train_folds'], TRAIN_FOLDS)
             for split in ('train', 'test'):
                 run('r10_ce', 'score', '--split', split, '--device', 'cpu', '--score-batch', 32, '--threads', 2)
             final = ['--dataset', dataset, '--output', out, '--device', 'cpu', '--threads', 2, '--rounds', 8]
+            if self.r13:
+                final += ['--r13-features', '--target-leaderboard', '.985']
             for stage in ('fit', 'select', 'evaluate', 'inference'):
                 run('r10', stage, *final)
             # Exercise both output branches regardless of the tiny-data gate outcome.
             selection_path = work / 'selection.json'
             selection = json.loads(selection_path.read_text())
             frozen = selection_path.read_bytes()
+            if self.r13:
+                report = json.loads((work / 'metrics.json').read_text())
+                self.assertEqual(report['version'], 'r13-mined-siblings-1')
+                self.assertEqual(report['target_leaderboard'], .985)
+                self.assertIsNone(report['target_met_on_leaderboard'])
+                self.assertIn('by_target_address', report['errors'])
             run('r10', 'evaluate', *final)
             self.assertEqual(selection_path.read_bytes(), frozen)
-            for choice in ('reference', 'r10'):
+            for choice in ('reference', 'r13' if self.r13 else 'r10'):
                 selection['selected'] = choice
                 selection_path.write_text(json.dumps(selection))
                 run('r10', 'inference', *final)

@@ -22,22 +22,57 @@ TRAIN_FOLDS = [0, 1, 8]
 VALID_FOLDS = [9]
 
 
-def samples(work, dataset, folds, limit, negatives=4):
+def mined_negatives(work, anchors, truth, lexical_pool, ann_pool, limit=5):
+    """Mine stage-2 false positives, with lexical/ANN/random diversity.
+
+    Stage 2 learns on 2/5; these scores are out of sample for CE folds 0/1/8/9.
+    Read ONLY pair keys and predictions: a stored stage-2 label is not CE truth.
+    Remove every labelled positive before ranking, including positives outside
+    the pruned candidate set. Keep the R12 ceiling of five negatives/business.
+    """
+    keys = ['sidx', 'tidx']
+    model = (pl.scan_parquet(work / 'stage2_train.parquet').select(*keys, 'p2')
+        .join(anchors.lazy(), on='sidx', how='semi').collect(engine='streaming'))
+    if model.select(keys).n_unique() != len(model) or model['p2'].null_count() or not model['p2'].is_finite().all():
+        raise ValueError('Invalid stage-2 hard-negative scores')
+    model = model.join(truth, on=keys, how='anti').sort(['sidx', 'p2', 'tidx'], descending=[False, True, False])
+    lexical = lexical_pool.sort('sidx', 'brank', 'tidx')
+    ann = ann_pool.join(truth, on=keys, how='anti').sort('sidx', 'nrank', 'tidx')
+    random = lexical_pool.with_columns(key=pl.struct(keys).hash(seed=1313)).sort('sidx', 'key', 'tidx')
+    chosen = anchors.head(0).with_columns(tidx=pl.lit(None, pl.UInt32))
+    parts = []
+    # Select each source AFTER removing already chosen pairs, so overlap does
+    # not consume the diversity slots. A final lexical refill covers sparse ANN.
+    for priority, (pool, count) in enumerate(((model, 2), (lexical, 1), (ann, 1), (random, 1), (lexical, limit))):
+        take = pool.select(keys).join(chosen, on=keys, how='anti').group_by('sidx', maintain_order=True).head(count)
+        parts.append(take.with_columns(priority=pl.lit(priority)))
+        chosen = pl.concat([chosen, take])
+    return (pl.concat(parts).sort('sidx', 'priority', maintain_order=True).group_by('sidx', maintain_order=True)
+            .head(limit).select(keys))
+
+
+def samples(work, dataset, folds, limit, negatives=4, mine_stage2=False):
     """Sample businesses first; retain truth plus lexical and ANN hard negatives."""
     s1, tg = load_split(work, 'train', columns=['idx', 'entity_id', 'country'])
     anchors = s1.select(sidx=pl.col('idx').cast(pl.UInt32)).filter(fold_expr().is_in(folds))
+    if mine_stage2 and not set(folds) <= set(TRAIN_FOLDS + VALID_FOLDS):
+        raise ValueError('Stage-2 mining is restricted to out-of-sample CE folds 0/1/8/9')
     anchors = anchors.with_columns(key=pl.col('sidx').hash(seed=10)).sort('key').head(limit).drop('key')
     truth = ground_truth_pairs(dataset, s1, tg).join(anchors, on='sidx', how='semi')
     del s1, tg
     candidates = (pl.scan_parquet(work / 'cands_train.parquet').join(anchors.lazy(), on='sidx', how='semi')
                   .select('sidx', 'tidx', 'brank').collect(engine='streaming'))
     neg = candidates.join(truth, on=['sidx', 'tidx'], how='anti')
-    lexical = neg.sort('sidx', 'brank', 'tidx').group_by('sidx', maintain_order=True).head(max(1, negatives // 2))
     ann = (pl.scan_parquet(work / 'ncands_train.parquet').join(anchors.lazy(), on='sidx', how='semi')
            .select('sidx', 'tidx', 'nrank').collect(engine='streaming'))
-    ann = ann.join(truth, on=['sidx', 'tidx'], how='anti').sort('sidx', 'nrank', 'tidx').group_by('sidx', maintain_order=True).head(max(1, negatives // 2))
-    random = neg.with_columns(key=pl.struct('sidx', 'tidx').hash(seed=88)).sort('sidx', 'key').group_by('sidx', maintain_order=True).head(1)
-    neg = pl.concat([x.select('sidx', 'tidx') for x in (lexical, ann, random)]).unique().with_columns(label=pl.lit(0, pl.Int8))
+    if mine_stage2:
+        neg = mined_negatives(work, anchors, truth, neg, ann)
+    else:
+        lexical = neg.sort('sidx', 'brank', 'tidx').group_by('sidx', maintain_order=True).head(max(1, negatives // 2))
+        ann = ann.join(truth, on=['sidx', 'tidx'], how='anti').sort('sidx', 'nrank', 'tidx').group_by('sidx', maintain_order=True).head(max(1, negatives // 2))
+        random = neg.with_columns(key=pl.struct('sidx', 'tidx').hash(seed=88)).sort('sidx', 'key').group_by('sidx', maintain_order=True).head(1)
+        neg = pl.concat([x.select('sidx', 'tidx') for x in (lexical, ann, random)]).unique()
+    neg = neg.with_columns(label=pl.lit(0, pl.Int8))
     # Business sampling already bounds size. Keeping the first four targets
     # discards valid variants and systematically favours Source 2 (lower IDs).
     # Retain every labelled positive; per-business weights still balance loss.
@@ -241,13 +276,17 @@ def fit_model(args, train, valid):
         'early_stopping_folds': VALID_FOLDS, 'train_pairs': len(train), 'valid_pairs': len(valid),
         'max_length': args.max_length, 'batch': args.batch, 'accumulation': args.accumulation,
         'positive_sampling': 'all positives for selected businesses',
+        'negative_sampling': ('stage2 top-2 + lexical + ANN + random, refill, at most 5/business'
+                              if getattr(args, 'mine_stage2', False) else 'lexical + ANN + random'),
+        'stage2_mining': getattr(args, 'mine_stage2', False),
         'address_dropout': {'probability': .10, 'side': 'target', 'per_pair': True, 'preserve_field_separator': True},
         'seed': args.seed, 'history': history, 'calibrated_probability': False})
 
 
 def train(args):
-    tr = samples(args.work, args.dataset, TRAIN_FOLDS, args.train_businesses)
-    va = samples(args.work, args.dataset, VALID_FOLDS, args.valid_businesses)
+    mining = getattr(args, 'mine_stage2', False)
+    tr = samples(args.work, args.dataset, TRAIN_FOLDS, args.train_businesses, mine_stage2=mining)
+    va = samples(args.work, args.dataset, VALID_FOLDS, args.valid_businesses, mine_stage2=mining)
     tr.write_parquet(args.work / 'ce_train_sample.parquet')
     va.write_parquet(args.work / 'ce_valid_sample.parquet')
     fit_model(args, tr, va)
@@ -305,6 +344,7 @@ def main():
     p.add_argument('--threads', type=int, default=8)
     p.add_argument('--seed', type=int, default=1010)
     p.add_argument('--lr', type=float, default=2e-5)
+    p.add_argument('--mine-stage2', action='store_true', help='R13: mine out-of-sample stage-2 false positives')
     args = p.parse_args()
     if min(args.max_length, args.batch, args.score_batch, args.accumulation, args.epochs,
            args.patience, args.train_businesses, args.valid_businesses, args.threads) < 1 or args.lr <= 0:

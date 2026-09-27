@@ -1,9 +1,11 @@
 # Star Coders - Amazon ML Challenge
 
-> **R10:** follow [the desktop neural guide](docs/README_r10.md).
-> Built from `r8-neural` for i9-13900K / 32 GB / RTX 3060 12 GB: bounded ANN
-> retrieval, neural candidate rescue, a trained cross-encoder and validation-gated
-> graph fusion. Full training and a 97.5 score have **not** been measured.
+> **R13:** follow [the R13 run guide](docs/README_r13.md).
+> Built from R12 with model-mined cross-encoder negatives, neural evidence from
+> other confidently matched records, and corrected final competition features.
+> Includes L4 VM and i9-13900K / 32 GB / RTX 3060 profiles. The **98.5% website
+> target is unverified**; full R13 GPU training and submission are still required.
+> The [R10 guide](docs/README_r10.md) and [R12 guide](docs/README_r12.md) remain available.
 
 
 > **On `r7-improvements`, start with [the r7 experiment guide](docs/README_r7_overnight.md).**
