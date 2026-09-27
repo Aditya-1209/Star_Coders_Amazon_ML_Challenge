@@ -1,5 +1,10 @@
 # R12 on the GCP L4 VM
 
+For the **France-only, 3–4 hour budget follow-up**, use
+[the cached France guide](README_r12_france.md). It requires the completed R12
+cache and preserves India/US predictions. The full-training instructions below
+took approximately **12.5 hours** in the recorded run and are not the short profile.
+
 Target: Ubuntu 24.04, Python 3.12, `g2-standard-32` (32 vCPUs,
 128 GB RAM, one NVIDIA L4 with 24 GB VRAM). Install the NVIDIA driver and
 provide outbound internet access (Cloud NAT when VM external IPs are prohibited).
